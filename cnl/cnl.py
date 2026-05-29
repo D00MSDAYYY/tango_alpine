@@ -1,13 +1,20 @@
 from typing import Literal
 
-from pydantic import Field, BaseModel, field_validator
-from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QWidget, QLabel, QDialog, QHBoxLayout, QPushButton
+from pydantic import Field, BaseModel
+from PySide6.QtGui import QIcon, QPalette, QColor
+from PySide6.QtCore import Signal, QSize
+from PySide6.QtWidgets import (
+    QWidget,
+    QLabel,
+    QDialog,
+    QHBoxLayout,
+    QPushButton,
+)
 from vispy.color import Color
 
 from aux.gui.handy_enums import *
-from aux.gui.polymorphic_field_handlers import PolymorphicBase
-from aux.gui.settings_decorators import with_settings_property, settings_with_signals
+from aux.polymorphic_field_handlers import PolymorphicBase
+from aux.settings_decorators import with_settings_property, settings_with_signals
 
 from conf.conf_dialog import ConfiguratorDialog
 from conf.appearance_conf import AppearenceConfigurator
@@ -54,10 +61,20 @@ class _Channel(QWidget):
         raise
 
     def __del__(self):
-        self.stop()
+        try:
+            self.stop()
+        except Exception:
+            pass
 
     def _setup_ui(self):
+        palette = self.palette()
+        palette.setColor(QPalette.ColorRole.Window, QColor("#3a3a3a"))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor("#f0f0f0"))
+        self.setAutoFillBackground(True)
+        self.setPalette(palette)
+
         main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(6, 4, 6, 4)
 
         color_wgt = QWidget()
         self.color_wgt = color_wgt
@@ -65,21 +82,31 @@ class _Channel(QWidget):
         self._update_color_indicator()
 
         self.name_label = QLabel("")
+        self.name_label.setPalette(palette)
 
         self.name_label.setText(self.settings.name)
         self.settings.name_changed.connect(self.name_label.setText)
 
-        sq_side = 30
+        sq_side = 36
+        icon_size = QSize(29, 29)
         fixed_w = sq_side
         fixed_h = sq_side
 
-        palette_btn = QPushButton("🎨")
+        palette_btn = QPushButton()
         self.palette_btn = palette_btn
+        palette_btn.setFlat(True)
         palette_btn.setFixedSize(fixed_w, fixed_h)
+        palette_btn.setIcon(QIcon(":/icons/channel_settings.png"))
+        palette_btn.setIconSize(icon_size)
+        palette_btn.setToolTip("Настройки канала")
 
-        close_btn = QPushButton("❌")
+        close_btn = QPushButton()
         self.close_btn = close_btn
+        close_btn.setFlat(True)
         close_btn.setFixedSize(fixed_w, fixed_h)
+        close_btn.setIcon(QIcon(":/icons/close.png"))
+        close_btn.setIconSize(icon_size)
+        close_btn.setToolTip("Закрыть канал")
 
         main_layout.addWidget(color_wgt)
         main_layout.addWidget(self.name_label)

@@ -1,5 +1,5 @@
 {
-  "time_range": "PT50S",
+  "time_range": "PT11S",
   "x_axis_label": "x",
   "y_axis_label": "y",
   "cnls_setts": [
@@ -8,8 +8,8 @@
       "name": "cnl1",
       "units": "A",
       "appearence": {
-        "line_width": 0.5,
-        "line_color": "purple"
+        "line_width": 1.0,
+        "line_color": "cornsilk"
       },
       "setup_config": {
         "host": "127.0.0.1",
@@ -41,7 +41,7 @@
       "units": null,
       "appearence": {
         "line_width": 1.0,
-        "line_color": "red"
+        "line_color": "white"
       },
       "setup_config": {
         "polling_interval_msec": 5

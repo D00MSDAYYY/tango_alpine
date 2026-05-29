@@ -138,8 +138,11 @@ class ObservableList(MutableSequence):
         self.insert(len(self), value)
 
     def extend(self, values):
-        for v in values:
-            self.append(v)
+        new_values = [self._unwrap_item(v) for v in values]
+        if not new_values:
+            return
+        self._list.extend(new_values)
+        self._notify()
 
     def clear(self):
         if self._list:
@@ -152,10 +155,10 @@ class ObservableList(MutableSequence):
         return self._wrap_item(val)
 
     def remove(self, value):
+        unwrapped = self._unwrap_item(value)
         for i, item in enumerate(self._list):
-            if item == self._unwrap_item(value):
+            if item == unwrapped:
                 del self[i]
-                self._notify()
                 return
         raise ValueError("item not in list")
 
@@ -188,9 +191,8 @@ class ObservableDict(MutableMapping):
         return self._wrap_item(self._dict[key])
 
     def __setitem__(self, key, value):
-        old = self._dict.get(key)
         new = self._unwrap_item(value)
-        if old == new:
+        if key in self._dict and self._dict[key] == new:
             return
         self._dict[key] = new
         self._notify()
@@ -229,7 +231,7 @@ class ObservableDict(MutableMapping):
             new_items[k] = self._unwrap_item(v)
         changed = False
         for k, v in new_items.items():
-            if self._dict.get(k) != v:
+            if k not in self._dict or self._dict[k] != v:
                 self._dict[k] = v
                 changed = True
         if changed:
@@ -270,25 +272,25 @@ class SettingsWithSignals(QObject):
         super().__init__()
         self._proxies = {}
         model_cls: Type[BaseModel] = getattr(self, "_original_model_class", None)
-        expected_wrapper_name = f"{model_cls.__name__}WithSignals"
 
         if model_cls is None:
             raise TypeError("SettingsWithSignals должен быть создан через settings_with_signals()")
 
-        if type(data).__name__ == expected_wrapper_name:
-            # Обёртка той же модели — извлекаем внутреннюю модель
-            self._model = data._model
-            if kwargs:
-                # kwargs игнорируем, так как модель уже готова
-                pass
-        if isinstance(data, SettingsWithSignals):
-            self._model = model_cls(**data.model_dump(), **kwargs)
-            if kwargs:
-                pass
+        if isinstance(data, type(self)):
+            data_dict = data.model_dump()
+            data_dict.update(kwargs)
+            self._model = model_cls(**data_dict)
+        elif isinstance(data, SettingsWithSignals):
+            data_dict = data.model_dump()
+            data_dict.update(kwargs)
+            self._model = model_cls(**data_dict)
         elif isinstance(data, BaseModel):
-            self._model = data
             if kwargs:
-                pass  # kwargs игнорируются, так как модель уже готова
+                data_dict = data.model_dump()
+                data_dict.update(kwargs)
+                self._model = model_cls(**data_dict)
+            else:
+                self._model = data
         else:
             # Старое поведение: создаём новую модель из словаря или другого источника
             if isinstance(data, SimpleNamespace):
@@ -307,10 +309,10 @@ class SettingsWithSignals(QObject):
         _wrapper_cache[model_id] = weakref.ref(self)
         weakref.finalize(self._model, lambda id_: _wrapper_cache.pop(id_, None), model_id)
 
-        def __getattr__(self, name: str) -> Any:
-            if name.startswith("_") or name in ("model_dump", "model_dump_json", "dict", "json"):
-                raise AttributeError(name)
-            return getattr(self._model, name)
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_") or name in ("model_dump", "model_dump_json", "dict", "json"):
+            raise AttributeError(name)
+        return getattr(self._model, name)
 
     @classmethod
     def _wrap_value(cls, value: Any) -> Any:

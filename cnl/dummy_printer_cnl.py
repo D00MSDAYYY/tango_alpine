@@ -6,7 +6,7 @@ from pydantic import Field, BaseModel
 from PySide6.QtCore import Signal, QThread, QObject
 
 from cnl.cnl import _ChannelSettings, _Channel
-from aux.gui.settings_decorators import with_settings_property, settings_with_signals
+from aux.settings_decorators import with_settings_property, settings_with_signals
 
 
 class SineWorker(QObject):

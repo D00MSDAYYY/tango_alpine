@@ -4,18 +4,23 @@ from pydantic import BaseModel, field_validator, field_serializer
 T = TypeVar("T", bound=BaseModel)
 
 
+def _dump_model(value: BaseModel, info):
+    return value.model_dump(mode=info.mode)
+
+
 class PolymorphicBase(BaseModel):
     _subtypes: ClassVar[Dict[str, Type["PolymorphicBase"]]] = {}
 
-    def __init_subclass__(cls, **kwargs):
-        super().__init_subclass__(**kwargs)
+    @classmethod
+    def __pydantic_init_subclass__(cls, **kwargs):
+        super().__pydantic_init_subclass__(**kwargs)
         # Находим корневой класс иерархии
         root_cls = None
-        for base in cls.__mro__:
+        for base in cls.__mro__[1:]:
             if "_subtypes" in base.__dict__:
                 root_cls = base
                 break
-        if root_cls is PolymorphicBase:
+        if root_cls is None or root_cls is PolymorphicBase:
             cls._subtypes = {}
             root_cls = cls
         else:
@@ -48,18 +53,26 @@ def _build_subtype_map(base_cls):
 # Валидатор для словаря Dict[K, BaseModel]
 # ======================================================================
 def polymorphic_dict_validator(base_model_cls):
-    def validator(cls, v: dict) -> dict:
+    def validator(cls, v: Any) -> dict:
+        if not isinstance(v, dict):
+            raise ValueError(
+                f"Expected dict for '{base_model_cls.__name__}', got {type(v)}"
+            )
         subtypes = _build_subtype_map(base_model_cls)
         res = {}
         for k, item in v.items():
             if isinstance(item, base_model_cls):
                 res[k] = item
-            else:
+            elif isinstance(item, dict):
                 t = item.get("type")
                 sub_cls = subtypes.get(t)
                 if sub_cls is None:
                     raise ValueError(f"Unknown type '{t}' for key {k}")
                 res[k] = sub_cls.model_validate(item)
+            else:
+                raise ValueError(
+                    f"Unexpected element type {type(item)} for key {k}"
+                )
         return res
 
     return validator
@@ -75,7 +88,7 @@ def polymorphic_dict_field_handlers(base_model_cls: Type[T], field_name: str):
     )
 
     def serialize_polymorphic_dict(self, value: Dict, handler, info):
-        return {str(k): v.model_dump() for k, v in value.items()}
+        return {str(k): _dump_model(v, info) for k, v in value.items()}
 
     serializer = field_serializer(field_name, mode="wrap")(serialize_polymorphic_dict)
     return validator, serializer
@@ -114,7 +127,7 @@ def polymorphic_field_handler(base_model_cls: Type[T], field_name: str):
     field_val = field_validator(field_name, mode="before")(validator)
 
     def serialize_single(self, value: BaseModel, handler, info):
-        return value.model_dump()
+        return _dump_model(value, info)
 
     serializer = field_serializer(field_name, mode="wrap")(serialize_single)
     return field_val, serializer
@@ -134,17 +147,24 @@ def validate_polymorphic_set(
     result = set()
     for item in v:
         if isinstance(item, base_model_cls):
-            result.add(item)
+            parsed = item
         elif isinstance(item, dict):
             t = item.get("type")
             sub_cls = subtypes.get(t)
             if sub_cls is None:
                 raise ValueError(f"Unknown type '{t}' in set field '{field_name}'")
-            result.add(sub_cls.model_validate(item))
+            parsed = sub_cls.model_validate(item)
         else:
             raise ValueError(
                 f"Unexpected element type {type(item)} in set field '{field_name}'"
             )
+        try:
+            result.add(parsed)
+        except TypeError as exc:
+            raise ValueError(
+                f"Elements of set field '{field_name}' must be hashable. "
+                "Use frozen pydantic models or a list field instead."
+            ) from exc
     return result
 
 
@@ -160,7 +180,7 @@ def polymorphic_set_field_handlers(base_model_cls: Type[T], field_name: str):
 
     def serialize_set(self, value: Set[BaseModel], handler, info):
         # Сериализуем set в список словарей
-        return [item.model_dump() for item in value]
+        return [_dump_model(item, info) for item in value]
 
     serializer = field_serializer(field_name, mode="wrap")(serialize_set)
     return field_val, serializer
@@ -199,7 +219,7 @@ def polymorphic_list_field_handlers(base_model_cls: Type[T], field_name: str):
     field_val = field_validator(field_name, mode="before")(validator)
 
     def serialize_list(self, value: list, handler, info):
-        return [item.model_dump() for item in value]
+        return [_dump_model(item, info) for item in value]
 
     serializer = field_serializer(field_name, mode="wrap")(serialize_list)
     return field_val, serializer

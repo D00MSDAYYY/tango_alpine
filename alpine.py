@@ -5,9 +5,9 @@ from datetime import datetime, timedelta
 
 import numpy as np
 from pydantic import BaseModel, Field
-from PySide6.QtGui import QFont
-from PySide6.QtCore import Qt, Signal, QThreadPool, QRunnable, QThread, QTimer
-from PySide6.QtWidgets import QToolBar, QMainWindow, QDialog, QSplitter
+from PySide6.QtGui import QIcon
+from PySide6.QtCore import Qt, Signal, QThreadPool, QRunnable,  QTimer, QSize
+from PySide6.QtWidgets import QToolBar, QMainWindow, QDialog, QSplitter, QPushButton
 
 from conf.conf_dialog import ConfiguratorDialog
 from conf.alpine_conf import AlpineConfigurator
@@ -17,9 +17,9 @@ from aux.vispy_plot_widget import VispyPlot
 from aux.gui.widgets.legend import LegendWidget
 from aux.gui.widgets.opener_dialog import OpenerDialog
 from aux.gui.widgets.searchable_list import SearchableListView
-from aux.gui.polymorphic_field_handlers import polymorphic_list_field_handlers
-from aux.gui.data_filter_with_binary_search import data_filter_with_binary_search
-from aux.gui.settings_decorators import (
+from aux.polymorphic_field_handlers import polymorphic_list_field_handlers
+from aux.data_filter_with_binary_search import data_filter_with_binary_search
+from aux.settings_decorators import (
     with_settings_property,
     settings_with_signals,
     get_saving_trigger,
@@ -93,6 +93,7 @@ class Alpine(QMainWindow):
         self.cnl_to_curve = {}
 
         self._threadpool = QThreadPool.globalInstance()
+        self._is_shutting_down = False
 
     ###################
     #                 #
@@ -132,9 +133,27 @@ class Alpine(QMainWindow):
     def remove_cnl(self, cnl):
         if curve := self.cnl_to_curve.pop(cnl, None):
             self.plot_widget.removeCurve(curve)
-        self.legend.remove_cnl(cnl)
         cnl.stop()
-        cnl.deleteLater()
+        self.legend.remove_cnl(cnl)
+
+    def shutdown(self):
+        if self._is_shutting_down:
+            return
+        self._is_shutting_down = True
+
+        if self._stats_timer:
+            self._stats_timer.stop()
+        if self._gc_timer:
+            self._gc_timer.stop()
+
+        for cnl in list(self.cnl_to_curve):
+            self.remove_cnl(cnl)
+
+        self._threadpool.waitForDone(5000)
+
+    def closeEvent(self, event):
+        self.shutdown()
+        super().closeEvent(event)
 
     ###########################
     #                         #
@@ -164,7 +183,14 @@ class Alpine(QMainWindow):
 
     def _action_pause_triggered(self):
         self.stop_flag = not self.stop_flag
-        self.pause_action.setText("▶" if self.stop_flag else "⏸")
+        self.pause_action.setIcon(
+            QIcon(":/icons/resume.png" if self.stop_flag else ":/icons/pause.png")
+        )
+        self.pause_action.setToolTip(
+            "Продолжить обновление графика"
+            if self.stop_flag
+            else "Пауза обновления графика"
+        )
 
     ########################
     #                      #
@@ -200,21 +226,16 @@ class Alpine(QMainWindow):
             raise
 
     def _setup_ui(self):
-        self.setFont(QFont("Arial", 18))
         self._setup_toolbar()
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
         plot_widget = VispyPlot()
-        # plot_widget = pg.PlotWidget()
         self.plot_widget = plot_widget
         plot_widget.set_axis_labels(
             self.settings.x_axis_label,
             self.settings.y_axis_label,
         )
-        # plot_widget.showGrid(x_flag=True, y_flag=True, alpha=0.3)
-        # plot_widget.setLabel("left", self.settings.y_axis_label)
-        # plot_widget.setLabel("bottom", self.settings.x_axis_label)
 
         self.legend = LegendWidget()
 
@@ -227,23 +248,42 @@ class Alpine(QMainWindow):
     def _setup_toolbar(self):
         toolbar = QToolBar(self)
         toolbar.setMovable(False)
+        toolbar.setIconSize(QSize(38, 38))
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
 
-        self.add_action = toolbar.addAction("➕")
-        self.add_action.setToolTip("Добавить канал")
-        self.add_action.triggered.connect(self._action_add_triggered, self.Qt_DirConn)
+        button_size = QSize(46, 46)
+        icon_size = QSize(38, 38)
 
-        self.palette_action = toolbar.addAction("🎨")
+        self.add_action = QPushButton()
+        self.add_action.setFlat(True)
+        self.add_action.setFixedSize(button_size)
+        self.add_action.setIcon(QIcon(":/icons/add.png"))
+        self.add_action.setIconSize(icon_size)
+        self.add_action.setToolTip("Добавить канал")
+        self.add_action.clicked.connect(self._action_add_triggered, self.Qt_DirConn)
+        toolbar.addWidget(self.add_action)
+
+        self.palette_action = QPushButton()
+        self.palette_action.setFlat(True)
+        self.palette_action.setFixedSize(button_size)
+        self.palette_action.setIcon(QIcon(":/icons/axes.png"))
+        self.palette_action.setIconSize(icon_size)
         self.palette_action.setToolTip("Настройки внешнего вида")
-        self.palette_action.triggered.connect(
+        self.palette_action.clicked.connect(
             self._action_palette_triggered, self.Qt_DirConn
         )
+        toolbar.addWidget(self.palette_action)
 
-        self.pause_action = toolbar.addAction("⏸")
+        self.pause_action = QPushButton()
+        self.pause_action.setFlat(True)
+        self.pause_action.setFixedSize(button_size)
+        self.pause_action.setIcon(QIcon(":/icons/pause.png"))
+        self.pause_action.setIconSize(icon_size)
         self.pause_action.setToolTip("Пауза обновления графика")
-        self.pause_action.triggered.connect(
+        self.pause_action.clicked.connect(
             self._action_pause_triggered, self.Qt_DirConn
         )
+        toolbar.addWidget(self.pause_action)
 
     def _setup_stats_timer(self):
         self._redraw_plot_count = 0
@@ -307,9 +347,13 @@ class Alpine(QMainWindow):
     #                                             #
     ###############################################
     def _on_data_filtered(self, cnl, pos, to_dt):
+        if self._is_shutting_down:
+            return
         self._redraw_plot(cnl, pos, to_dt)
 
     def _on_cnl_updated(self, cnl):
+        if self._is_shutting_down or cnl not in self.cnl_to_curve:
+            return
         to_dt = datetime.now()
         from_dt = to_dt - self.time_range
 

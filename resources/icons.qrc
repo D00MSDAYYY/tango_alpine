@@ -1,0 +1,10 @@
+<RCC>
+  <qresource prefix="/icons">
+    <file alias="add.png">icons/add.png</file>
+    <file alias="axes.png">icons/axes.png</file>
+    <file alias="channel_settings.png">icons/channel_settings.png</file>
+    <file alias="close.png">icons/close.png</file>
+    <file alias="pause.png">icons/pause.png</file>
+    <file alias="resume.png">icons/resume.png</file>
+  </qresource>
+</RCC>

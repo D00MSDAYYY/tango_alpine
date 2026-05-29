@@ -8,7 +8,7 @@ from PySide6.QtCore import QThread, QObject, Signal, QTimer, Qt
 from tango import DeviceProxy
 
 from cnl.cnl import _ChannelSettings, _Channel
-from aux.gui.settings_decorators import with_settings_property, settings_with_signals
+from aux.settings_decorators import with_settings_property, settings_with_signals
 
 
 def is_scalar(value):
@@ -255,7 +255,7 @@ class TPEChannel(_Channel):
 
         if _polling_thread := self._polling_thread:
             _polling_thread.stop()
-            _polling_thread = None
+            self._polling_thread = None
 
         self.stopped.emit()
         print(f"{self.settings.name} остановлен")
