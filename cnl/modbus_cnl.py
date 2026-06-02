@@ -45,23 +45,23 @@ ModbusChannelSettings = settings_with_signals(_ModbusChannelSettings)
 
 
 def convert_float32(high: int, low: int, byte_order: str, word_order: str) -> float:
-    """
-    Конвертирует два 16-битных регистра в float32 с заданным порядком байтов и слов.
-    byte_order: 'big' или 'little' – порядок байтов внутри 32-битного числа.
-    word_order: 'big' – первый регистр – старшие 16 бит, второй – младшие;
-                 'little' – первый – младшие, второй – старшие.
-    """
-    if word_order == 'big':
-        w1, w2 = high, low
+    if word_order == "big":
+        words = (high, low)
+    elif word_order == "little":
+        words = (low, high)
     else:
-        w1, w2 = low, high
+        raise ValueError(f"Unsupported word_order: {word_order}")
 
-    combined = (w1 << 16) | w2
+    raw_bytes = []
+    for word in words:
+        if byte_order == "big":
+            raw_bytes.extend(((word >> 8) & 0xFF, word & 0xFF))
+        elif byte_order == "little":
+            raw_bytes.extend((word & 0xFF, (word >> 8) & 0xFF))
+        else:
+            raise ValueError(f"Unsupported byte_order: {byte_order}")
 
-    if byte_order == 'big':
-        return struct.unpack('>f', struct.pack('>I', combined))[0]
-    else:
-        return struct.unpack('<f', struct.pack('<I', combined))[0]
+    return struct.unpack(">f", bytes(raw_bytes))[0]
 
 
 ########################
