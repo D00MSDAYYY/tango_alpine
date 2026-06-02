@@ -1,4 +1,5 @@
 import gc
+import traceback
 from typing import List
 from datetime import datetime, timedelta
 
@@ -70,6 +71,21 @@ class _FilterDataTask(QRunnable):
         self.callback(self.cnl, pos, self.to_dt)
 
 
+class PlotCurveFactory:
+    def __init__(self, plot_widget):
+        self.plot_widget = plot_widget
+
+    def create_curve(self, cnl):
+        pen = VispyPlot.Pen(
+            color=cnl.settings.appearence.line_color.value,
+            width=cnl.settings.appearence.line_width,
+        )
+        return self.plot_widget.plotCurve(
+            dots_coords=np.array([[0, 0], [0, 0]], dtype=np.float32),
+            pen=pen,
+        )
+
+
 @with_settings_property()
 class Alpine(QMainWindow):
     cnl_created_with_sett = Signal(object)
@@ -104,18 +120,16 @@ class Alpine(QMainWindow):
     def add_cnl(self, cnl):
         self.legend.add_cnl(cnl)
 
-        pen = VispyPlot.Pen(
-            color=cnl.settings.appearence.line_color.value,
-            width=cnl.settings.appearence.line_width,
-        )
-        curve = self.plot_widget.plotCurve(
-            dots_coords=np.array([[0, 0], [0, 0]], dtype=np.float32),
-            pen=pen,
-        )
-        self.cnl_to_curve[cnl] = curve
+        curve = cnl.create_plot_curve(self.plot_curve_factory)
+        if curve is not None:
+            self.cnl_to_curve[cnl] = curve
 
         cnl.close_requested.connect(self.remove_cnl)
         cnl.updated.connect(self._on_cnl_updated)
+        cnl.error_occurred.connect(
+            lambda error_text, cnl=cnl: self._on_cnl_error(cnl, error_text),
+            Qt.ConnectionType.QueuedConnection,
+        )
 
         cnl.settings.appearence.line_color_changed.connect(
             lambda color, cnl=cnl: self._update_curve_style(cnl),
@@ -128,14 +142,29 @@ class Alpine(QMainWindow):
         try:
             cnl.start()
         except Exception as e:
+            error_text = traceback.format_exc()
             print(str(e))
             self.remove_cnl(cnl)
+            self.add_error_cnl(cnl.settings, error_text)
+
+    def add_error_cnl(self, sett, error_text):
+        self.add_cnl(self.cnl_maker.create_error_cnl(sett, error_text))
 
     def remove_cnl(self, cnl):
         if curve := self.cnl_to_curve.pop(cnl, None):
             self.plot_widget.removeCurve(curve)
-        cnl.stop()
+        try:
+            cnl.stop()
+        except Exception as e:
+            print(str(e))
         self.legend.remove_cnl(cnl)
+
+    def _on_cnl_error(self, cnl, error_text):
+        if self._is_shutting_down or cnl not in self.cnl_to_curve:
+            return
+        sett = cnl.settings
+        self.remove_cnl(cnl)
+        self.add_error_cnl(sett, error_text)
 
     def shutdown(self):
         if self._is_shutting_down:
@@ -173,8 +202,11 @@ class Alpine(QMainWindow):
                 all_channels = self.legend.get_channels()
                 if sett.name in [cnl.settings.name for cnl in all_channels]:
                     continue
-                cnl = self.cnl_maker.create_cnl(sett)
-                self.add_cnl(cnl)
+                try:
+                    cnl = self.cnl_maker.create_cnl(sett)
+                    self.add_cnl(cnl)
+                except Exception:
+                    self.add_error_cnl(sett, traceback.format_exc())
 
     def _action_palette_triggered(self):
         conf = AlpineConfigurator(sett=self.settings)
@@ -233,6 +265,7 @@ class Alpine(QMainWindow):
 
         plot_widget = VispyPlot()
         self.plot_widget = plot_widget
+        self.plot_curve_factory = PlotCurveFactory(plot_widget)
         plot_widget.set_axis_labels(
             self.settings.x_axis_label,
             self.settings.y_axis_label,
@@ -289,6 +322,7 @@ class Alpine(QMainWindow):
     def _setup_stats_timer(self):
         self._redraw_plot_count = 0
         self._redraw_plot_hz = 0.0
+        self._stats_timer_ticks = 0
         self._stats_timer = QTimer()
         self._stats_timer.setInterval(1000)  # раз в секунду
         self._stats_timer.timeout.connect(self._on_stats_timer)
@@ -339,6 +373,9 @@ class Alpine(QMainWindow):
         else:
             self._redraw_plot_hz = 0.0
         self._redraw_plot_count = 0  # сброс счётчика
+        self._stats_timer_ticks += 1
+        if self._stats_timer_ticks % 5 == 0:
+            print(f"Частота перерисовки графика: {self._redraw_plot_hz:.1f} Hz")
 
     def _on_gc_timer(self):
         collected = gc.collect()

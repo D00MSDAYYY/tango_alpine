@@ -42,6 +42,7 @@ ChannelSettings = settings_with_signals(_ChannelSettings)
 class _Channel(QWidget):
     updated = Signal(object)
     close_requested = Signal(object)
+    error_occurred = Signal(str)
     stopped = Signal()
 
     def __init__(self, settings):
@@ -59,6 +60,9 @@ class _Channel(QWidget):
 
     def stop(self):
         raise
+
+    def create_plot_curve(self, plot_curve_factory):
+        return plot_curve_factory.create_curve(self)
 
     def __del__(self):
         try:

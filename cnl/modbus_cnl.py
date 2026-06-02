@@ -297,6 +297,7 @@ class ModbusChannel(_Channel):
         except Exception as e:
             print(f"{self.settings.name} ошибка запуска: {e}")
             self._is_running = False
+            self.error_occurred.emit(str(e))
 
     def stop(self):
         if not self._is_running:
@@ -325,6 +326,7 @@ class ModbusChannel(_Channel):
 
     def _on_error(self, error_msg):
         print(f"{self.settings.name} ошибка: {error_msg}")
+        self.error_occurred.emit(error_msg)
 
     def _on_connection_lost(self):
         print(f"{self.settings.name} потеряно соединение с устройством")

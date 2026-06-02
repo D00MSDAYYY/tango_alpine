@@ -1,4 +1,5 @@
 from cnl.cnl import _Channel
+from cnl.error_cnl import ErrorChannel
 from cnl.modbus_cnl import ModbusChannelSettings, ModbusChannel
 from cnl.tango_per_event_cnl import TPEChannelSettings, TPEChannel
 from cnl.dummy_printer_cnl import DummyChannelSettings, DummyChannel
@@ -20,3 +21,6 @@ class ChannelMaker:
         cnl = cnl_class(cnl_sett)
 
         return cnl
+
+    def create_error_cnl(self, cnl_sett, error_text):
+        return ErrorChannel(cnl_sett, error_text)

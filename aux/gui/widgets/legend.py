@@ -48,6 +48,6 @@ class LegendWidget(QWidget):
         widgets = []
         for i in range(self._layout.count()):
             item = self._layout.itemAt(i)
-            if item and item.widget():
+            if item and item.widget() and hasattr(item.widget(), "settings"):
                 widgets.append(item.widget())
         return widgets

@@ -15,6 +15,17 @@ def is_scalar(value):
     return not isinstance(value, Iterable) or isinstance(value, (str, bytes, bytearray))
 
 
+def normalize_attr_value(value):
+    if is_scalar(value):
+        return value
+    try:
+        if len(value) == 1:
+            return value[0]
+    except TypeError:
+        pass
+    return value
+
+
 class TPESetupConfig(BaseModel):
     host: str = Field(default="")
     port: int = Field(default=10000)
@@ -142,7 +153,7 @@ class _TPEWorker(QObject):
                 "timestamp": datetime.now().timestamp(),
                 "device": self.settings.device_name,
                 "attribute": self.settings.attribute_name,
-                "value": attr_value,
+                "value": normalize_attr_value(attr_value),
             }
 
             self.data_ready.emit(record)
@@ -247,6 +258,7 @@ class TPEChannel(_Channel):
         except Exception as e:
             print(f"{self.settings.name} ошибка запуска: {e}")
             self._is_running = False
+            self.error_occurred.emit(str(e))
 
     def stop(self):
         if not self._is_running:
@@ -268,6 +280,7 @@ class TPEChannel(_Channel):
 
     def _on_error(self, error_msg):
         print(f"{self.settings.name} ошибка: {error_msg}")
+        self.error_occurred.emit(error_msg)
 
     def _on_connection_lost(self):
         print(f"{self.settings.name} потеряно соединение с Tango устройством")
