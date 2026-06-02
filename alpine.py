@@ -1,5 +1,4 @@
 import gc
-import json
 from typing import List
 from datetime import datetime, timedelta
 
@@ -14,6 +13,7 @@ from conf.alpine_conf import AlpineConfigurator
 from cnl.cnl import _ChannelSettings
 from cnl.cnl_maker import ChannelMaker
 from aux.vispy_plot_widget import VispyPlot
+from aux.config_store import ConfigStoreFactory
 from aux.gui.widgets.legend import LegendWidget
 from aux.gui.widgets.opener_dialog import OpenerDialog
 from aux.gui.widgets.searchable_list import SearchableListView
@@ -78,8 +78,9 @@ class Alpine(QMainWindow):
 
     settings_created = Signal(object)
 
-    def __init__(self, sett_path):
+    def __init__(self, sett_path, config_store_factory=None):
         super().__init__()
+        self.config_store_factory = config_store_factory or ConfigStoreFactory()
         self._setup_settings(sett_path)
         self._setup_ui()
         self._setup_stats_timer()
@@ -199,9 +200,9 @@ class Alpine(QMainWindow):
     ########################
     def _setup_settings(self, sett_path):
         self.settings_path = sett_path
+        self.config_store = self.config_store_factory.create(self.settings_path)
         try:
-            with open(self.settings_path, "r") as f:
-                obj = json.load(f)
+            obj = self.config_store.load(self.settings_path)
             self.settings: _AlpineSettings = AlpineSettings(**obj)  # type: ignore
 
             get_saving_trigger().triggered.connect(
@@ -321,8 +322,10 @@ class Alpine(QMainWindow):
         self.plot_widget.set_y_axis_label(value)
 
     def _save_all_settings(self):
-        with open(self.settings_path, "w") as f:
-            f.write(self.settings.model_dump_json(indent=2))
+        self.config_store.save(
+            self.settings_path,
+            self.settings.model_dump(mode="json"),
+        )
 
     ##########################
     #                        #

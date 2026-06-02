@@ -17,7 +17,7 @@ class SettingsPicker(QDialog):
         super().__init__(parent)
 
         self.selected_file_path = None
-        self.valid_extensions = [".json"]
+        self.valid_extensions = [".xlsx", ".json"]
         self.setWindowTitle("Выберите файл конфигурации")
         self.setModal(True)
         self.setMinimumWidth(500)
@@ -34,7 +34,7 @@ class SettingsPicker(QDialog):
 
         file_layout = QHBoxLayout()
         self.file_path_edit = QLineEdit()
-        self.file_path_edit.setText("./config.json")
+        self.file_path_edit.setText("./resources/config.xlsx")
         file_layout.addWidget(self.file_path_edit)
 
         self.browse_button = QPushButton("Найти...")
@@ -42,7 +42,7 @@ class SettingsPicker(QDialog):
         file_layout.addWidget(self.browse_button)
         layout.addLayout(file_layout)
 
-        formats_label = QLabel(f"Поддерживаемые форматы: .json")
+        formats_label = QLabel("Поддерживаемые форматы: .xlsx, .json")
         layout.addWidget(formats_label)
 
         self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -88,7 +88,12 @@ class SettingsPicker(QDialog):
             return False
 
     def _browse_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Выберите файл конфигурации", "", "Файл конфигурации (*.json)")
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Выберите файл конфигурации",
+            "",
+            "Файл конфигурации (*.xlsx *.json)",
+        )
         if file_path:
             self.file_path_edit.setText(file_path)
 

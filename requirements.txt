@@ -3,7 +3,7 @@ numpy
 pyqtgraph
 pydantic
 pytango
-pymodbus
 pandas
 pynput
 vispy
+pymodbus
