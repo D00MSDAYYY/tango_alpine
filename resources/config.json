@@ -1,5 +1,8 @@
 {
-  "time_range": "PT50S",
+  "time_range": "PT10S",
+  "history_range": "PT750S",
+  "max_redraw_hz": 20.0,
+  "max_plot_points": 5000,
   "x_axis_label": "x",
   "y_axis_label": "y",
   "cnls_setts": [
@@ -8,8 +11,9 @@
       "name": "cnl1",
       "units": "A",
       "appearence": {
-        "line_width": 0.5,
-        "line_color": "purple"
+        "line_color": "cornsilk",
+        "line_width": 1,
+        "show_dots": false
       },
       "setup_config": {
         "host": "127.0.0.1",
@@ -24,8 +28,9 @@
       "name": "cnl2",
       "units": "A",
       "appearence": {
-        "line_width": 1.0,
-        "line_color": "cyan"
+        "line_color": "cyan",
+        "line_width": 1,
+        "show_dots": false
       },
       "setup_config": {
         "host": "127.0.0.1",
@@ -40,11 +45,12 @@
       "name": "cnl_dummy",
       "units": null,
       "appearence": {
-        "line_width": 1.0,
-        "line_color": "red"
+        "line_color": "white",
+        "line_width": 1,
+        "show_dots": false
       },
       "setup_config": {
-        "polling_interval_msec": 5
+        "polling_interval_msec": 1
       }
     },
     {
@@ -52,8 +58,9 @@
       "name": "modbus_public_float",
       "units": "float",
       "appearence": {
-        "line_width": 2.0,
-        "line_color": "yellow"
+        "line_color": "yellow",
+        "line_width": 2,
+        "show_dots": false
       },
       "setup_config": {
         "host": "45.8.248.56",
@@ -62,7 +69,7 @@
         "register_type": "holding",
         "register_address": 1,
         "data_type": "float32",
-        "polling_interval_msec": 60,
+        "polling_interval_msec": 100,
         "byte_order": "big",
         "word_order": "big"
       }
@@ -72,8 +79,9 @@
       "name": "modbus_real",
       "units": "float",
       "appearence": {
-        "line_width": 2.0,
-        "line_color": "purple"
+        "line_color": "purple",
+        "line_width": 1,
+        "show_dots": false
       },
       "setup_config": {
         "host": "10.10.9.101",
@@ -82,7 +90,7 @@
         "register_type": "input",
         "register_address": 6,
         "data_type": "float32",
-        "polling_interval_msec": 11,
+        "polling_interval_msec": 1,
         "byte_order": "little",
         "word_order": "big"
       }
@@ -92,8 +100,9 @@
       "name": "SaX",
       "units": "A",
       "appearence": {
-        "line_width": 3.0,
-        "line_color": "green"
+        "line_color": "green",
+        "line_width": 3,
+        "show_dots": false
       },
       "setup_config": {
         "host": "10.10.0.34",

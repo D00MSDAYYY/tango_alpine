@@ -67,8 +67,6 @@ class ErrorChannel(_Channel):
         main_layout.addStretch()
         main_layout.addWidget(info_btn)
         main_layout.addWidget(close_btn)
-
-    def _connect_signals(self):
         self.info_btn.clicked.connect(lambda flag: self._show_error())
         self.close_btn.clicked.connect(lambda flag: self.close_requested.emit(self))
 

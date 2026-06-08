@@ -36,6 +36,9 @@ class ModbusSetupConfig(BaseModel):
     word_order: str = Field(default="big")      
 
 
+ModbusSetupConfigWithSignals = settings_with_signals(ModbusSetupConfig)
+
+
 class _ModbusChannelSettings(_ChannelSettings):
     type: Literal["ModbusChannelSettings"] = "ModbusChannelSettings"
     setup_config: ModbusSetupConfig = Field(default_factory=ModbusSetupConfig)
@@ -99,8 +102,9 @@ class _PollingWorker(QObject):
 
         self._connect_client()
         self._timer = QTimer()
-        self._timer.setInterval(self.settings.polling_interval_msec)
+        interval = max(1, int(self.settings.polling_interval_msec))
         self._timer.timeout.connect(self._poll_device)
+        self._timer.setInterval(interval)
         self._timer.start()
 
         self._poll_device()
@@ -198,8 +202,8 @@ class _PollingWorker(QObject):
 
             record = {
                 "timestamp": datetime.now().timestamp(),
-                "device": f"{cfg.host}:{cfg.port}:{cfg.modbus_id}",
-                "attribute": f"{cfg.register_type}_{cfg.register_address}",
+                # "device": f"{cfg.host}:{cfg.port}:{cfg.modbus_id}",
+                # "attribute": f"{cfg.register_type}_{cfg.register_address}",
                 "value": value,
             }
 
@@ -260,15 +264,13 @@ class ModbusChannel(_Channel):
         super().__init__(settings)
         self._polling_thread: _PollingThread | None = None
         self._is_running = False
-        self._update_timer: QTimer | None = None
-        self._pending_record = None   # для ограничения частоты GUI
 
     def start(self):
         if self._is_running:
             print(f"{self.settings.name} уже запущен")
             return
 
-        cfg = self.settings.setup_config
+        cfg = self.settings.setup_config._model
 
         try:
             self._polling_thread = _PollingThread(cfg)
@@ -277,13 +279,6 @@ class ModbusChannel(_Channel):
             self._polling_thread.error_occurred.connect(self._on_error)
             self._polling_thread.connection_lost.connect(self._on_connection_lost)
             self._polling_thread.finished.connect(self._on_thread_finished)
-
-            # Таймер ограничения частоты обновления GUI (не чаще 20 раз в секунду)
-            gui_update_interval = min(cfg.polling_interval_msec, 50)
-            self._update_timer = QTimer()
-            self._update_timer.setInterval(gui_update_interval)
-            self._update_timer.timeout.connect(self._update_gui)
-            self._update_timer.start()
 
             self._polling_thread.start()
             self._polling_thread.setPriority(QThread.Priority.LowPriority)
@@ -303,10 +298,6 @@ class ModbusChannel(_Channel):
         if not self._is_running:
             return
         self._is_running = False
-        if self._update_timer:
-            self._update_timer.stop()
-            self._update_timer.deleteLater()
-            self._update_timer = None
         if self._polling_thread:
             self._polling_thread.stop()
             self._polling_thread = None
@@ -314,15 +305,10 @@ class ModbusChannel(_Channel):
         print(f"{self.settings.name} остановлен")
 
     def _on_data_received(self, record):
+        self.register_poll_timing(record)
         self.data.append(record)
-        self._pending_record = record   # сохраняем для отложенной отправки
-
-    def _update_gui(self):
-        """Вызывается таймером для ограничения частоты обновления GUI"""
-        if self._pending_record is not None:
-            self.new_data = self._pending_record
-            self.updated.emit(self)
-            self._pending_record = None
+        self.new_data = record
+        self.updated.emit(self)
 
     def _on_error(self, error_msg):
         print(f"{self.settings.name} ошибка: {error_msg}")

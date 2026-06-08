@@ -34,6 +34,9 @@ class TPESetupConfig(BaseModel):
     polling_interval_msec: int = Field(default=1000)
 
 
+TPESetupConfigWithSignals = settings_with_signals(TPESetupConfig)
+
+
 class _TPEChannelSettings(_ChannelSettings):
     type: Literal["TPEChannelSettings"] = "TPEChannelSettings"
     setup_config: TPESetupConfig = Field(default_factory=TPESetupConfig)
@@ -83,7 +86,7 @@ class _TPEWorker(QObject):
 
         _timer = QTimer()
         self._timer = _timer
-        _timer.setInterval(self.settings.polling_interval_msec)
+        self._apply_polling_interval()
         _timer.timeout.connect(self._poll_device)
         _timer.start()
 
@@ -113,10 +116,18 @@ class _TPEWorker(QObject):
             self.error_occurred.emit(f"Ошибка подключения к Tango: {e}")
             self._device_proxy = None
 
+    def _apply_polling_interval(self):
+        if self._timer is None:
+            return
+        interval = max(1, int(self.settings.polling_interval_msec))
+        if self._timer.interval() != interval:
+            self._timer.setInterval(interval)
+
     # @profile
     def _poll_device(self):
         if not self._is_running:
             return
+        self._apply_polling_interval()
 
         poll_start = time.time()
         self._poll_count += 1
@@ -228,7 +239,7 @@ class TPEChannel(_Channel):
             print(f"{self.settings.name} уже запущен")
             return
 
-        cfg = self.settings.setup_config
+        cfg = self.settings.setup_config._model
 
         try:
             _polling_thread = _TPEThread(cfg)
@@ -274,8 +285,9 @@ class TPEChannel(_Channel):
 
     # @profile
     def _on_data_received(self, record):
-        self.data.append(record)
+        self.register_poll_timing(record)
         self.new_data = record
+        self.data.append(record)
         self.updated.emit(self)
 
     def _on_error(self, error_msg):

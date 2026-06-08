@@ -13,6 +13,9 @@ from conf._conf import _Configurator
 class AlpineConfigurator(_Configurator):
     to_datetime_changed = Signal(object)
     time_range_changed = Signal(timedelta)
+    history_range_changed = Signal(timedelta)
+    max_redraw_hz_changed = Signal(float)
+    max_plot_points_changed = Signal(int)
     x_label_changed = Signal(str)
     y_label_changed = Signal(str)  # TODO mb remove all
 
@@ -31,6 +34,27 @@ class AlpineConfigurator(_Configurator):
         time_range_spin.setRange(1, 86400 * 365)
         time_range_spin.setValue(int(self.sett.time_range.total_seconds()))
         self.form.addRow("Интервал, сек:", time_range_spin)
+
+        history_range_spin = QSpinBox()
+        self.history_range_spin = history_range_spin
+        history_range_spin.valueChanged.connect(self._on_history_range_changed)
+        history_range_spin.setRange(0, 86400 * 365)
+        history_range_spin.setValue(int(self.sett.history_range.total_seconds()))
+        self.form.addRow("История, сек:", history_range_spin)
+
+        max_redraw_hz_spin = QSpinBox()
+        self.max_redraw_hz_spin = max_redraw_hz_spin
+        max_redraw_hz_spin.valueChanged.connect(self._on_max_redraw_hz_changed)
+        max_redraw_hz_spin.setRange(1, 240)
+        max_redraw_hz_spin.setValue(int(round(self.sett.max_redraw_hz)))
+        self.form.addRow("Макс. отрисовка, Hz:", max_redraw_hz_spin)
+
+        max_plot_points_spin = QSpinBox()
+        self.max_plot_points_spin = max_plot_points_spin
+        max_plot_points_spin.valueChanged.connect(self._on_max_plot_points_changed)
+        max_plot_points_spin.setRange(2, 10_000_000)
+        max_plot_points_spin.setValue(int(self.sett.max_plot_points))
+        self.form.addRow("Макс. точек на линию:", max_plot_points_spin)
 
         # Ось X
         x_label_edit = QLineEdit()
@@ -54,6 +78,19 @@ class AlpineConfigurator(_Configurator):
         td = timedelta(seconds=seconds)
         self.pending_settings.time_range = td
         self.time_range_changed.emit(td)
+
+    def _on_history_range_changed(self, seconds: int):
+        td = timedelta(seconds=seconds)
+        self.pending_settings.history_range = td
+        self.history_range_changed.emit(td)
+
+    def _on_max_redraw_hz_changed(self, hz: int):
+        self.pending_settings.max_redraw_hz = float(hz)
+        self.max_redraw_hz_changed.emit(float(hz))
+
+    def _on_max_plot_points_changed(self, value: int):
+        self.pending_settings.max_plot_points = int(value)
+        self.max_plot_points_changed.emit(int(value))
 
     def _on_x_label_changed(self, label: str):
         self.pending_settings.x_axis_label = label

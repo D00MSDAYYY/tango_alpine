@@ -1,12 +1,12 @@
 import gc
 import traceback
 from typing import List
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import numpy as np
 from pydantic import BaseModel, Field
 from PySide6.QtGui import QIcon
-from PySide6.QtCore import Qt, Signal, QThreadPool, QRunnable,  QTimer, QSize
+from PySide6.QtCore import Qt, Signal, QTimer, QSize
 from PySide6.QtWidgets import QToolBar, QMainWindow, QDialog, QSplitter, QPushButton
 
 from conf.conf_dialog import ConfiguratorDialog
@@ -14,12 +14,12 @@ from conf.alpine_conf import AlpineConfigurator
 from cnl.cnl import _ChannelSettings
 from cnl.cnl_maker import ChannelMaker
 from aux.vispy_plot_widget import VispyPlot
+from aux.plot_curve_factory import PlotCurveFactory
 from aux.config_store import ConfigStoreFactory
 from aux.gui.widgets.legend import LegendWidget
 from aux.gui.widgets.opener_dialog import OpenerDialog
 from aux.gui.widgets.searchable_list import SearchableListView
 from aux.polymorphic_field_handlers import polymorphic_list_field_handlers
-from aux.data_filter_with_binary_search import data_filter_with_binary_search
 from aux.settings_decorators import (
     with_settings_property,
     settings_with_signals,
@@ -29,6 +29,9 @@ from aux.settings_decorators import (
 
 class _AlpineSettings(BaseModel):
     time_range: timedelta = Field(default=timedelta(seconds=30))
+    history_range: timedelta = Field(default=timedelta(seconds=750))
+    max_redraw_hz: float = Field(default=20.0)
+    max_plot_points: int = Field(default=5000)
     x_axis_label: str = Field(default="X")
     y_axis_label: str = Field(default="Y")
 
@@ -39,51 +42,6 @@ class _AlpineSettings(BaseModel):
 
 
 AlpineSettings = settings_with_signals(_AlpineSettings)
-
-
-class _FilterDataTask(QRunnable):
-    def __init__(self, alpine, cnl, from_dt, to_dt, callback):
-        super().__init__()
-        self.alpine = alpine
-        self.cnl = cnl
-        self.from_dt = from_dt
-        self.to_dt = to_dt
-        self.callback = callback
-
-    def run(self):
-        filtered_data = data_filter_with_binary_search(
-            self.cnl.data, self.from_dt, self.to_dt
-        )
-
-        del self.cnl.data
-        self.cnl.data = filtered_data
-
-        if filtered_data:
-            to_ts = self.to_dt.timestamp()
-
-            pos = np.array(
-                [[d["timestamp"] - to_ts, d["value"]] for d in filtered_data],
-                dtype=np.float32,
-            )
-        else:
-            pos = np.empty((0, 2), dtype=np.float32)
-
-        self.callback(self.cnl, pos, self.to_dt)
-
-
-class PlotCurveFactory:
-    def __init__(self, plot_widget):
-        self.plot_widget = plot_widget
-
-    def create_curve(self, cnl):
-        pen = VispyPlot.Pen(
-            color=cnl.settings.appearence.line_color.value,
-            width=cnl.settings.appearence.line_width,
-        )
-        return self.plot_widget.plotCurve(
-            dots_coords=np.array([[0, 0], [0, 0]], dtype=np.float32),
-            pen=pen,
-        )
 
 
 @with_settings_property()
@@ -98,19 +56,20 @@ class Alpine(QMainWindow):
         super().__init__()
         self.config_store_factory = config_store_factory or ConfigStoreFactory()
         self._setup_settings(sett_path)
-        self._setup_ui()
-        self._setup_stats_timer()
-        self._setup_gc_timer()
-
         self.time_range = self.settings.time_range
+        self.history_range = self.settings.history_range
         self.stop_flag = False
+        self.cnl_to_curve = {}
+        self._dirty_cnls = set()
+        self._is_shutting_down = False
 
         # TODO this violates DI principles but ok for now
         self.cnl_maker = ChannelMaker(self)
-        self.cnl_to_curve = {}
 
-        self._threadpool = QThreadPool.globalInstance()
-        self._is_shutting_down = False
+        self._setup_ui()
+        self._setup_plot_update_timer()
+        self._setup_stats_timer()
+        self._setup_gc_timer()
 
     ###################
     #                 #
@@ -139,6 +98,10 @@ class Alpine(QMainWindow):
             lambda width, cnl=cnl: self._update_curve_style(cnl),
             self.Qt_DirConn,
         )
+        cnl.settings.appearence.show_dots_changed.connect(
+            lambda show_dots, cnl=cnl: self._update_curve_style(cnl),
+            self.Qt_DirConn,
+        )
         try:
             cnl.start()
         except Exception as e:
@@ -151,6 +114,7 @@ class Alpine(QMainWindow):
         self.add_cnl(self.cnl_maker.create_error_cnl(sett, error_text))
 
     def remove_cnl(self, cnl):
+        self._dirty_cnls.discard(cnl)
         if curve := self.cnl_to_curve.pop(cnl, None):
             self.plot_widget.removeCurve(curve)
         try:
@@ -175,11 +139,11 @@ class Alpine(QMainWindow):
             self._stats_timer.stop()
         if self._gc_timer:
             self._gc_timer.stop()
+        if self._plot_update_timer:
+            self._plot_update_timer.stop()
 
         for cnl in list(self.cnl_to_curve):
             self.remove_cnl(cnl)
-
-        self._threadpool.waitForDone(5000)
 
     def closeEvent(self, event):
         self.shutdown()
@@ -216,6 +180,9 @@ class Alpine(QMainWindow):
 
     def _action_pause_triggered(self):
         self.stop_flag = not self.stop_flag
+        self.plot_widget.set_paused(self.stop_flag)
+        if not self.stop_flag:
+            self._redraw_all_curves()
         self.pause_action.setIcon(
             QIcon(":/icons/resume.png" if self.stop_flag else ":/icons/pause.png")
         )
@@ -244,6 +211,18 @@ class Alpine(QMainWindow):
                 self._on_time_range_changed,
                 self.Qt_DirConn,
             )  # type: ignore
+            self.settings.history_range_changed.connect(
+                self._on_history_range_changed,
+                self.Qt_DirConn,
+            )  # type: ignore
+            self.settings.max_redraw_hz_changed.connect(
+                self._on_max_redraw_hz_changed,
+                self.Qt_DirConn,
+            )  # type: ignore
+            self.settings.max_plot_points_changed.connect(
+                self._on_max_plot_points_changed,
+                self.Qt_DirConn,
+            )  # type: ignore
             self.settings.x_axis_label_changed.connect(
                 self._on_x_axis_label_changed,
                 self.Qt_DirConn,
@@ -265,6 +244,9 @@ class Alpine(QMainWindow):
 
         plot_widget = VispyPlot()
         self.plot_widget = plot_widget
+        self.plot_widget.set_period(self.settings.time_range.total_seconds())
+        self.plot_widget.set_history_range(self.settings.history_range.total_seconds())
+        self.plot_widget.set_max_plot_points(self.settings.max_plot_points)
         self.plot_curve_factory = PlotCurveFactory(plot_widget)
         plot_widget.set_axis_labels(
             self.settings.x_axis_label,
@@ -321,12 +303,19 @@ class Alpine(QMainWindow):
 
     def _setup_stats_timer(self):
         self._redraw_plot_count = 0
+        self._incoming_update_count = 0
         self._redraw_plot_hz = 0.0
-        self._stats_timer_ticks = 0
+        self._incoming_update_hz = 0.0
         self._stats_timer = QTimer()
-        self._stats_timer.setInterval(1000)  # раз в секунду
+        self._stats_timer.setInterval(5000)
         self._stats_timer.timeout.connect(self._on_stats_timer)
         self._stats_timer.start()
+
+    def _setup_plot_update_timer(self):
+        self._plot_update_timer = QTimer()
+        self._plot_update_timer.setInterval(self._redraw_timer_interval_msec())
+        self._plot_update_timer.timeout.connect(self._on_plot_update_timer)
+        self._plot_update_timer.start()
 
     def _setup_gc_timer(self):
         self._gc_timer = QTimer()
@@ -341,13 +330,21 @@ class Alpine(QMainWindow):
     ############################
     def _update_curve_style(self, cnl):
         if curve := self.cnl_to_curve.get(cnl):
-            color = cnl.settings.appearence.line_color.value
-            width = cnl.settings.appearence.line_width
-            curve.setColor(color=color)
-            curve.setWidth(width=width)
+            self.plot_curve_factory.update_curve_style(cnl, curve)
 
     def _on_time_range_changed(self, value):
         self.time_range = value
+        self.plot_widget.set_period(value.total_seconds())
+
+    def _on_history_range_changed(self, value):
+        self.history_range = value
+        self.plot_widget.set_history_range(value.total_seconds())
+
+    def _on_max_redraw_hz_changed(self, value):
+        self._plot_update_timer.setInterval(self._redraw_timer_interval_msec(value))
+
+    def _on_max_plot_points_changed(self, value):
+        self.plot_widget.set_max_plot_points(value)
 
     def _on_x_axis_label_changed(self, value):
         self.plot_widget.set_x_axis_label(value)
@@ -369,44 +366,107 @@ class Alpine(QMainWindow):
 
     def _on_stats_timer(self):
         if self._redraw_plot_count > 0:
-            self._redraw_plot_hz = self._redraw_plot_count / 1.0  # за секунду
+            self._redraw_plot_hz = self._redraw_plot_count / 5.0
         else:
             self._redraw_plot_hz = 0.0
-        self._redraw_plot_count = 0  # сброс счётчика
-        self._stats_timer_ticks += 1
-        if self._stats_timer_ticks % 5 == 0:
-            print(f"Частота перерисовки графика: {self._redraw_plot_hz:.1f} Hz")
+        if self._incoming_update_count > 0:
+            self._incoming_update_hz = self._incoming_update_count / 5.0
+        else:
+            self._incoming_update_hz = 0.0
+
+        self._redraw_plot_count = 0
+        self._incoming_update_count = 0
+        print(
+            f"Частота данных: {self._incoming_update_hz:.1f} Hz, "
+            f"перерисовки графика: {self._redraw_plot_hz:.1f} Hz"
+        )
 
     def _on_gc_timer(self):
         collected = gc.collect()
         print(f"🧹 Сборщик мусора вызван (каждые 30 с), удалено объектов: {collected}")
+
+    def _on_plot_update_timer(self):
+        if self.stop_flag or not self._dirty_cnls:
+            return
+        dirty_cnls = list(self._dirty_cnls)
+        self._dirty_cnls.clear()
+        for cnl in dirty_cnls:
+            self._redraw_plot(cnl, refresh=False)
+        self.plot_widget.refresh()
+        self._redraw_plot_count += 1
 
     ###############################################
     #                                             #
     #    misc (but most intensitive) callbacks    #
     #                                             #
     ###############################################
-    def _on_data_filtered(self, cnl, pos, to_dt):
-        if self._is_shutting_down:
-            return
-        self._redraw_plot(cnl, pos, to_dt)
-
     def _on_cnl_updated(self, cnl):
         if self._is_shutting_down or cnl not in self.cnl_to_curve:
             return
-        to_dt = datetime.now()
-        from_dt = to_dt - self.time_range
+        self._incoming_update_count += 1
+        self._dirty_cnls.add(cnl)
 
-        task = _FilterDataTask(self, cnl, from_dt, to_dt, self._on_data_filtered)
-        self._threadpool.start(task, priority=0)
-
-    def _redraw_plot(self, cnl, pos, to_dt):
+    def _redraw_plot(self, cnl, refresh=True):
         if self.stop_flag:
             return
         if curve := self.cnl_to_curve.get(cnl):
-            self.plot_widget.set_x_axis_time_reference(to_dt)
-            curve.setData(pos)
-            self.plot_widget.autoRange()
-            self._redraw_plot_count += 1
+            pos = self._channel_history_to_points(cnl)
+            curve.setData(pos, refresh=refresh)
+            if refresh:
+                self._redraw_plot_count += 1
+
+    def _redraw_all_curves(self):
+        for cnl in list(self.cnl_to_curve):
+            self._redraw_plot(cnl, refresh=False)
+        self.plot_widget.refresh()
+        self._redraw_plot_count += 1
+
+    def _channel_history_to_points(self, cnl):
+        self._prune_channel_data(cnl)
+        points = []
+        for record in cnl.data:
+            try:
+                timestamp = float(record["timestamp"])
+                value = float(record["value"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            points.append((timestamp, value))
+        if not points:
+            return np.empty((0, 2), dtype=np.float64)
+        return np.asarray(points, dtype=np.float64)
+
+    def _prune_channel_data(self, cnl):
+        if not cnl.data:
+            return
+        try:
+            latest_ts = float(cnl.data[-1]["timestamp"])
+        except (KeyError, TypeError, ValueError):
+            return
+
+        keep_seconds = (
+            self.time_range.total_seconds()
+            + self.history_range.total_seconds()
+        )
+        cutoff_ts = latest_ts - keep_seconds
+        first_keep_idx = 0
+        for idx, record in enumerate(cnl.data):
+            try:
+                if float(record["timestamp"]) >= cutoff_ts:
+                    first_keep_idx = idx
+                    break
+            except (KeyError, TypeError, ValueError):
+                continue
+        if first_keep_idx > 0:
+            del cnl.data[:first_keep_idx]
+
+    def _redraw_timer_interval_msec(self, max_redraw_hz=None):
+        if max_redraw_hz is None:
+            max_redraw_hz = self.settings.max_redraw_hz
+        try:
+            max_redraw_hz = float(max_redraw_hz)
+        except (TypeError, ValueError):
+            max_redraw_hz = 20.0
+        max_redraw_hz = max(1.0, max_redraw_hz)
+        return max(1, round(1000.0 / max_redraw_hz))
 
     Qt_DirConn = Qt.ConnectionType.DirectConnection

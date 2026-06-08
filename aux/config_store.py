@@ -29,7 +29,13 @@ class XlsxConfigStore:
     INDEX_SHEET = "index"
     INDEX_COLUMNS = ("name", "type")
     SETTINGS_COLUMNS = ("key", "value")
-    COMMON_CHANNEL_COLUMNS = ("name", "units", "line_color", "line_width")
+    COMMON_CHANNEL_COLUMNS = (
+        "name",
+        "units",
+        "line_color",
+        "line_width",
+        "show_dots",
+    )
 
     def load(self, path: str | Path) -> dict[str, Any]:
         tables = _read_xlsx_tables(Path(path))
@@ -102,6 +108,7 @@ class XlsxConfigStore:
     ) -> dict[str, Any]:
         line_color = row.get("line_color")
         line_width = row.get("line_width")
+        show_dots = row.get("show_dots")
         channel = {
             "type": channel_type,
             "name": name,
@@ -113,6 +120,8 @@ class XlsxConfigStore:
             channel["appearence"]["line_color"] = line_color
         if line_width not in (None, ""):
             channel["appearence"]["line_width"] = line_width
+        if show_dots not in (None, ""):
+            channel["appearence"]["show_dots"] = show_dots
 
         for key, value in row.items():
             if key in self.COMMON_CHANNEL_COLUMNS or value in (None, ""):
@@ -122,7 +131,14 @@ class XlsxConfigStore:
 
     def _settings_table(self, data: dict[str, Any]) -> list[list[Any]]:
         rows = [list(self.SETTINGS_COLUMNS)]
-        for key in ("time_range", "x_axis_label", "y_axis_label"):
+        for key in (
+            "time_range",
+            "history_range",
+            "max_redraw_hz",
+            "max_plot_points",
+            "x_axis_label",
+            "y_axis_label",
+        ):
             rows.append([key, data.get(key)])
         return rows
 
@@ -149,6 +165,7 @@ class XlsxConfigStore:
                 channel.get("units"),
                 appearence.get("line_color"),
                 appearence.get("line_width"),
+                appearence.get("show_dots"),
             ]
             row.extend(setup_config.get(column) for column in setup_columns)
             rows.append(row)
@@ -279,6 +296,10 @@ def _cell_value(cell_xml: ET.Element, shared_strings: list[str]) -> Any:
 def _parse_scalar(value: str) -> Any:
     if value == "":
         return None
+    if value.lower() == "true":
+        return True
+    if value.lower() == "false":
+        return False
     if re.fullmatch(r"-?\d+", value):
         return int(value)
     if re.fullmatch(r"-?\d+\.\d+", value):

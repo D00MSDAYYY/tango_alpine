@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QComboBox,
     QDoubleSpinBox,
+    QCheckBox,
 )
 
 from conf._conf import _Configurator
@@ -13,6 +14,7 @@ from aux.gui.handy_enums import LineColor
 class AppearenceConfigurator(_Configurator):
     line_color_changed = Signal(str)
     line_width_changed = Signal(float)
+    show_dots_changed = Signal(bool)
 
     def __init__(self, sett):
         super().__init__(sett=sett)
@@ -41,6 +43,12 @@ class AppearenceConfigurator(_Configurator):
         width_spin.valueChanged.connect(self._on_width_changed)
         form.addRow("Толщина линии:", width_spin)
 
+        show_dots_check = QCheckBox()
+        self.show_dots_check = show_dots_check
+        show_dots_check.setChecked(self.sett.show_dots)
+        show_dots_check.toggled.connect(self._on_show_dots_changed)
+        form.addRow("Показывать точки:", show_dots_check)
+
     def _on_color_changed(self, color_str: str):
         new_color = LineColor(color_str) # type: ignore
         self.pending_settings.line_color = new_color
@@ -49,3 +57,7 @@ class AppearenceConfigurator(_Configurator):
     def _on_width_changed(self, width: float):
         self.pending_settings.line_width = width
         self.line_width_changed.emit(width)
+
+    def _on_show_dots_changed(self, show_dots: bool):
+        self.pending_settings.show_dots = show_dots
+        self.show_dots_changed.emit(show_dots)

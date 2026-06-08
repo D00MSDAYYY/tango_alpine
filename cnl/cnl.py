@@ -1,4 +1,5 @@
 from typing import Literal
+from datetime import datetime
 
 from pydantic import Field, BaseModel
 from PySide6.QtGui import QIcon, QPalette, QColor
@@ -22,7 +23,9 @@ from conf.appearance_conf import AppearenceConfigurator
 
 class _Appearence(BaseModel):
     line_width: float = Field(default=1.0)
-    line_color: LineColor = Field(default_factory=random_line_color) # type: ignore
+    line_color: LineColor = Field(default_factory=random_line_color)  # type: ignore
+    show_dots: bool = Field(default=False)
+
 
 Appearence = settings_with_signals(_Appearence)
 
@@ -51,9 +54,13 @@ class _Channel(QWidget):
         self.settings = settings
         self.new_data = None
         self.data = []
+        self._last_poll_timestamp = None
+
+        self.settings.appearence.line_color_changed.connect(
+            self._update_color_indicator
+        )
 
         self._setup_ui()
-        self._connect_signals()
 
     def start(self):
         raise
@@ -63,6 +70,29 @@ class _Channel(QWidget):
 
     def create_plot_curve(self, plot_curve_factory):
         return plot_curve_factory.create_curve(self)
+
+    def register_poll_timing(self, record):
+        timestamp = record.get("timestamp") if isinstance(record, dict) else None
+        if timestamp is None:
+            timestamp = datetime.now().timestamp()
+
+        current_time = datetime.fromtimestamp(timestamp).strftime("%H:%M:%S.%f")[:-3]
+        # if self._last_poll_timestamp is None:
+        #     print(
+        #         f"{self.settings.name}: last_poll=-, "
+        #         f"new_poll={current_time}, delta=-"
+        #     )
+        # else:
+        #     last_time = datetime.fromtimestamp(self._last_poll_timestamp).strftime(
+        #         "%H:%M:%S.%f"
+        #     )[:-3]
+        #     delta_msec = (timestamp - self._last_poll_timestamp) * 1000
+        #     print(
+        #         f"{self.settings.name}: last_poll={last_time}, "
+        #         f"new_poll={current_time}, delta={delta_msec:.1f} ms"
+        #     )
+
+        self._last_poll_timestamp = timestamp
 
     def __del__(self):
         try:
@@ -103,6 +133,7 @@ class _Channel(QWidget):
         palette_btn.setIcon(QIcon(":/icons/channel_settings.png"))
         palette_btn.setIconSize(icon_size)
         palette_btn.setToolTip("Настройки канала")
+        self.palette_btn.clicked.connect(self._btn_palette_clicked)
 
         close_btn = QPushButton()
         self.close_btn = close_btn
@@ -111,6 +142,7 @@ class _Channel(QWidget):
         close_btn.setIcon(QIcon(":/icons/close.png"))
         close_btn.setIconSize(icon_size)
         close_btn.setToolTip("Закрыть канал")
+        self.close_btn.clicked.connect(lambda flag: self._btn_close_clicked())
 
         main_layout.addWidget(color_wgt)
         main_layout.addWidget(self.name_label)
@@ -121,14 +153,6 @@ class _Channel(QWidget):
     def _update_color_indicator(self):
         color_name = self.settings.appearence.line_color.value
         self.color_wgt.setStyleSheet(f"background-color: {Color(color_name).hex};")
-
-    def _connect_signals(self):
-        self.close_btn.clicked.connect(lambda flag: self._btn_close_clicked())
-
-        self.palette_btn.clicked.connect(self._btn_palette_clicked)
-        self.settings.appearence.line_color_changed.connect(
-            self._update_color_indicator
-        )
 
     def _btn_palette_clicked(self):
         conf = AppearenceConfigurator(sett=self.settings.appearence)
