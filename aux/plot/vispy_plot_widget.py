@@ -2,9 +2,9 @@ import numpy as np
 from vispy import scene
 from vispy.visuals.axis import Ticker
 from datetime import datetime
-from PySide6.QtWidgets import QWidget
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
+from aux.plot.curve import Curve
 
 PERIOD_LANE_HEIGHT = 3.0
 MAX_BACKGROUND_LINES = 24
@@ -82,68 +82,6 @@ class TimeAxisWidget(scene.AxisWidget):
 
 
 class VispyPlot(QWidget):
-    class Pen:
-        def __init__(self, color, width=1.0, show_dots=False):
-            self.color = color
-            self.width = width
-            self.show_dots = show_dots
-
-    class Curve:
-        def __init__(
-            self,
-            vispy_line,
-            vispy_markers,
-            history_lines,
-            parent_plot,
-            color,
-            show_dots,
-        ):
-            self._line = vispy_line
-            self._markers = vispy_markers
-            self._history_lines = history_lines
-            self._parent_plot = parent_plot
-            self._color = color
-            self._show_dots = show_dots
-            self._data = None
-
-        def setData(self, data, refresh=True):
-            self._data = np.asarray(data, dtype=np.float64)
-            if refresh:
-                self._parent_plot.refresh()
-
-        def _set_visual_data(self, data, history_data):
-            self._line.set_data(data)
-            self._markers.set_data(
-                data,
-                face_color=self._color,
-                edge_color=self._color,
-                size=5,
-            )
-            self._markers.visible = self._show_dots and len(data) > 0
-            for line, line_data in zip(self._history_lines, history_data):
-                line.set_data(line_data)
-            for line in self._history_lines[len(history_data):]:
-                line.set_data(np.empty((0, 2), dtype=np.float32))
-
-        def setColor(self, color):
-            self._color = color
-            self._line.set_data(color=color)
-            history_color = self._history_color()
-            for line in self._history_lines:
-                line.set_data(color=history_color)
-            self._parent_plot.refresh()
-
-        def setWidth(self, width):
-            self._line.set_data(width=width)
-            for line in self._history_lines:
-                line.set_data(width=max(1.0, float(width) * 0.65))
-
-        def setShowDots(self, show_dots):
-            self._show_dots = show_dots
-            self._markers.visible = show_dots
-
-        def _history_color(self):
-            return self._parent_plot._history_color(self._color)
 
     def __init__(self):
         super().__init__()
@@ -183,10 +121,10 @@ class VispyPlot(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.canvas.native)
 
-        self.curves = set()
+        self.curves = []
         self.canvas.events.mouse_wheel.connect(self._scroll_paused_vertical)
 
-    def set_x_axis_time_reference(self, value):
+    def _set_x_axis_time_reference(self, value):
         if isinstance(value, datetime):
             value = value.timestamp()
         self.x_axis.time_offset = float(value)
@@ -194,7 +132,7 @@ class VispyPlot(QWidget):
         self.x_axis.axis._need_update = True
         self.x_axis.axis.update()
 
-    def set_period(self, value):
+    def set_time_range(self, value):
         self.period_sec = max(1.0, float(value))
         if self.paused:
             rect = self.viewbox.camera.rect
@@ -244,34 +182,36 @@ class VispyPlot(QWidget):
         self.set_x_axis_label(x_label)
         self.set_y_axis_label(y_label)
 
-    def plotCurve(self, dots_coords, pen):
+    def add_curve(self, pen):
         line = scene.Line(
-            pos=dots_coords,
+            pos=np.empty((0, 2), dtype=np.float32),
             color=pen.color,
             width=pen.width,
-            parent=self.viewbox.scene,
+            parent=None,
         )  # type: ignore
         history_lines = [
             scene.Line(
                 pos=np.empty((0, 2), dtype=np.float32),
                 color=self._history_color(pen.color),
                 width=max(1.0, float(pen.width) * 0.65),
-                parent=self.viewbox.scene,
+                parent=None,
             )
             for _ in range(MAX_BACKGROUND_LINES)
         ]
-        markers = scene.Markers(parent=self.viewbox.scene)
-        curve = self.Curve(line, markers, history_lines, self, pen.color, pen.show_dots)
-        self.curves.add(curve)
-        curve.setData(dots_coords)
+        markers = scene.Markers(parent=None)
+        curve = Curve(line, markers, history_lines, self, pen.color, pen.show_dots)
+        self.curves.append(curve)
+        self._sync_curve_visual_order()
         return curve
 
-    def removeCurve(self, curve):
-        self.curves.discard(curve)
+    def remove_curve(self, curve):
+        if curve in self.curves:
+            self.curves.remove(curve)
         curve._line.parent = None
         curve._markers.parent = None
         for line in curve._history_lines:
             line.parent = None
+        self._sync_curve_visual_order()
 
         del curve
 
@@ -311,65 +251,11 @@ class VispyPlot(QWidget):
             self._refresh_live_camera(live_y_values)
         self.canvas.update()
 
-    def autoRange(self, margin=0.00000001):
+    def auto_range(self, margin=0.00000001):
         if self.paused:
             self._lock_paused_horizontal()
         else:
             self._refresh_live_camera()
-        return
-
-        has_data, x_min, x_max, y_min, y_max = self._get_data_bounds()
-        if not has_data:
-            self.viewbox.camera.set_range(x=(0, 1), y=(0, 1))
-            return
-
-        # Обработка X
-        if np.isfinite(x_min) and np.isfinite(x_max):
-            x_range = x_max - x_min
-            if x_range == 0:
-                x_min -= 1.0
-                x_max += 1.0
-            x_margin = (x_max - x_min) * margin
-            x_left = x_min - x_margin
-            x_right = x_max + x_margin
-        else:
-            # Если нет корректных X, оставляем текущие
-            rect = self.viewbox.camera.rect
-            x_left, x_right = rect.left, rect.left + rect.width
-
-        # Обработка Y
-        if np.isfinite(y_min) and np.isfinite(y_max):
-            y_range = y_max - y_min
-            if y_range == 0:
-                y_min -= 1.0
-                y_max += 1.0
-            y_margin = (y_max - y_min) * margin
-            y_bottom = y_min - y_margin
-            y_top = y_max + y_margin
-        else:
-            rect = self.viewbox.camera.rect
-            y_bottom, y_top = rect.bottom, rect.bottom + rect.height
-
-        self.viewbox.camera.set_range(x=(x_left, x_right), y=(y_bottom, y_top))
-
-    def _get_data_bounds(self):
-        x_min, x_max = np.inf, -np.inf
-        y_min, y_max = np.inf, -np.inf
-        has_data = False
-        for curve in self.curves:
-            pos = curve._line.pos
-            if pos is None or len(pos) == 0:
-                continue
-            has_data = True
-            cur_x_min = np.nanmin(pos[:, 0])
-            cur_x_max = np.nanmax(pos[:, 0])
-            cur_y_min = np.nanmin(pos[:, 1])
-            cur_y_max = np.nanmax(pos[:, 1])
-            x_min = min(x_min, cur_x_min)
-            x_max = max(x_max, cur_x_max)
-            y_min = min(y_min, cur_y_min)
-            y_max = max(y_max, cur_y_max)
-        return has_data, x_min, x_max, y_min, y_max
 
     def _format_x_tick_as_time(self, value):
         return datetime.fromtimestamp(float(value)).strftime("%H:%M:%S")
@@ -429,7 +315,7 @@ class VispyPlot(QWidget):
             lane_index = max(0, int(round(-center_y / self._lane_height())))
         else:
             lane_index = 0
-        self.set_x_axis_time_reference(now - self.period_sec * (lane_index + 1))
+        self._set_x_axis_time_reference(now - self.period_sec * (lane_index + 1))
 
     def _refresh_live_camera(self, y_values=None):
         y_bottom, y_height = self._live_y_rect(y_values)
@@ -519,7 +405,29 @@ class VispyPlot(QWidget):
             return (rgba[0], rgba[1], rgba[2], 0.24)
         except Exception:
             return (0.65, 0.70, 0.80, 0.24)
-    
+
+    def _invalidate_draw_order(self):
+        draw_order = getattr(self.canvas, "_draw_order", None)
+        if draw_order is not None:
+            draw_order.clear()
+
+    def _sync_curve_visual_order(self):
+        for curve in self.curves:
+            for line in curve._history_lines:
+                line.parent = None
+            curve._line.parent = None
+            curve._markers.parent = None
+
+        for curve in self.curves:
+            curve._line.parent = self.viewbox.scene
+            curve._markers.parent = self.viewbox.scene
+
+        for curve in self.curves:
+            for line in curve._history_lines:
+                line.parent = self.viewbox.scene
+
+        self._invalidate_draw_order()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.canvas.size = event.size().width(), event.size().height()

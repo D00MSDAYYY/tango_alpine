@@ -7,8 +7,9 @@ from datetime import datetime
 from pydantic import Field, BaseModel
 from PySide6.QtCore import Signal, QThread, QObject
 
-from cnl.cnl import _ChannelSettings, _Channel
-from aux.settings_decorators import with_settings_property, settings_with_signals
+from cnl._base import _Channel
+from cnl._settings import _ChannelSettings
+from aux.settings.decorators import with_settings_property, settings_with_signals
 
 
 class SineWorker(QObject):

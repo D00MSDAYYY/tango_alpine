@@ -47,7 +47,7 @@ class AlpineConfigurator(_Configurator):
         max_redraw_hz_spin.valueChanged.connect(self._on_max_redraw_hz_changed)
         max_redraw_hz_spin.setRange(1, 240)
         max_redraw_hz_spin.setValue(int(round(self.sett.max_redraw_hz)))
-        self.form.addRow("Макс. отрисовка, Hz:", max_redraw_hz_spin)
+        self.form.addRow("Макс. отрисовка, Гц:", max_redraw_hz_spin)
 
         max_plot_points_spin = QSpinBox()
         self.max_plot_points_spin = max_plot_points_spin

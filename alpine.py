@@ -1,4 +1,3 @@
-import gc
 import traceback
 from typing import List
 from datetime import timedelta
@@ -9,18 +8,14 @@ from PySide6.QtGui import QIcon
 from PySide6.QtCore import Qt, Signal, QTimer, QSize
 from PySide6.QtWidgets import QToolBar, QMainWindow, QDialog, QSplitter, QPushButton
 
-from conf.conf_dialog import ConfiguratorDialog
+from conf.dialog import ConfiguratorDialog
 from conf.alpine_conf import AlpineConfigurator
-from cnl.cnl import _ChannelSettings
-from cnl.cnl_maker import ChannelMaker
-from aux.vispy_plot_widget import VispyPlot
-from aux.plot_curve_factory import PlotCurveFactory
-from aux.config_store import ConfigStoreFactory
-from aux.gui.widgets.legend import LegendWidget
+from cnl._settings import _ChannelSettings
+from cnl.error_cnl import ErrorChannel
 from aux.gui.widgets.opener_dialog import OpenerDialog
 from aux.gui.widgets.searchable_list import SearchableListView
-from aux.polymorphic_field_handlers import polymorphic_list_field_handlers
-from aux.settings_decorators import (
+from aux.settings._polymorphic import polymorphic_list_field_handlers
+from aux.settings.decorators import (
     with_settings_property,
     settings_with_signals,
     get_saving_trigger,
@@ -52,24 +47,34 @@ class Alpine(QMainWindow):
 
     settings_created = Signal(object)
 
-    def __init__(self, sett_path, config_store_factory=None):
+    def __init__(
+        self,
+        sett_path,
+        config_store_factory,
+        cnl_maker,
+        plot_widget,
+        plot_curve_factory,
+        legend,
+    ):
         super().__init__()
-        self.config_store_factory = config_store_factory or ConfigStoreFactory()
+        self.config_store_factory = config_store_factory
+        self.cnl_maker = cnl_maker
+        self.plot_widget = plot_widget
+        self.plot_curve_factory = plot_curve_factory
+        self.legend = legend
+
         self._setup_settings(sett_path)
         self.time_range = self.settings.time_range
         self.history_range = self.settings.history_range
         self.stop_flag = False
+        self.cnls = set()
         self.cnl_to_curve = {}
         self._dirty_cnls = set()
         self._is_shutting_down = False
 
-        # TODO this violates DI principles but ok for now
-        self.cnl_maker = ChannelMaker(self)
-
         self._setup_ui()
         self._setup_plot_update_timer()
         self._setup_stats_timer()
-        self._setup_gc_timer()
 
     ###################
     #                 #
@@ -77,11 +82,7 @@ class Alpine(QMainWindow):
     #                 #
     ###################
     def add_cnl(self, cnl):
-        self.legend.add_cnl(cnl)
-
-        curve = cnl.create_plot_curve(self.plot_curve_factory)
-        if curve is not None:
-            self.cnl_to_curve[cnl] = curve
+        self.cnls.add(cnl)
 
         cnl.close_requested.connect(self.remove_cnl)
         cnl.updated.connect(self._on_cnl_updated)
@@ -107,16 +108,20 @@ class Alpine(QMainWindow):
         except Exception as e:
             error_text = traceback.format_exc()
             print(str(e))
-            self.remove_cnl(cnl)
-            self.add_error_cnl(cnl.settings, error_text)
+            self._on_cnl_error(cnl, error_text)
+            return
 
-    def add_error_cnl(self, sett, error_text):
-        self.add_cnl(self.cnl_maker.create_error_cnl(sett, error_text))
+        self.legend.add_cnl(cnl)
+
+        curve = cnl.create_plot_curve(self.plot_curve_factory)
+        if curve is not None:
+            self.cnl_to_curve[cnl] = curve
 
     def remove_cnl(self, cnl):
+        self.cnls.discard(cnl)
         self._dirty_cnls.discard(cnl)
         if curve := self.cnl_to_curve.pop(cnl, None):
-            self.plot_widget.removeCurve(curve)
+            self.plot_widget.remove_curve(curve)
         try:
             cnl.stop()
         except Exception as e:
@@ -124,11 +129,11 @@ class Alpine(QMainWindow):
         self.legend.remove_cnl(cnl)
 
     def _on_cnl_error(self, cnl, error_text):
-        if self._is_shutting_down or cnl not in self.cnl_to_curve:
+        if self._is_shutting_down or cnl not in self.cnls:
             return
-        sett = cnl.settings
+        error_cnl = ErrorChannel(cnl.settings, error_text)
         self.remove_cnl(cnl)
-        self.add_error_cnl(sett, error_text)
+        self.add_cnl(error_cnl)
 
     def shutdown(self):
         if self._is_shutting_down:
@@ -137,12 +142,10 @@ class Alpine(QMainWindow):
 
         if self._stats_timer:
             self._stats_timer.stop()
-        if self._gc_timer:
-            self._gc_timer.stop()
         if self._plot_update_timer:
             self._plot_update_timer.stop()
 
-        for cnl in list(self.cnl_to_curve):
+        for cnl in list(self.cnls):
             self.remove_cnl(cnl)
 
     def closeEvent(self, event):
@@ -168,9 +171,9 @@ class Alpine(QMainWindow):
                     continue
                 try:
                     cnl = self.cnl_maker.create_cnl(sett)
-                    self.add_cnl(cnl)
                 except Exception:
-                    self.add_error_cnl(sett, traceback.format_exc())
+                    cnl = ErrorChannel(sett, traceback.format_exc())
+                self.add_cnl(cnl)
 
     def _action_palette_triggered(self):
         conf = AlpineConfigurator(sett=self.settings)
@@ -242,22 +245,23 @@ class Alpine(QMainWindow):
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        plot_widget = VispyPlot()
-        self.plot_widget = plot_widget
-        self.plot_widget.set_period(self.settings.time_range.total_seconds())
+        self.plot_widget.set_time_range(self.settings.time_range.total_seconds())
         self.plot_widget.set_history_range(self.settings.history_range.total_seconds())
         self.plot_widget.set_max_plot_points(self.settings.max_plot_points)
-        self.plot_curve_factory = PlotCurveFactory(plot_widget)
-        plot_widget.set_axis_labels(
+        self.plot_widget.set_axis_labels(
             self.settings.x_axis_label,
             self.settings.y_axis_label,
         )
 
-        self.legend = LegendWidget()
-
         splitter.addWidget(self.plot_widget)
         splitter.addWidget(self.legend)
+        splitter.setChildrenCollapsible(True)
+        splitter.setCollapsible(0, False)
+        splitter.setCollapsible(1, True)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
         splitter.setSizes([int(self.width() * 0.75), int(self.width() * 0.25)])
+        self.splitter = splitter
 
         self.setCentralWidget(splitter)
 
@@ -317,12 +321,6 @@ class Alpine(QMainWindow):
         self._plot_update_timer.timeout.connect(self._on_plot_update_timer)
         self._plot_update_timer.start()
 
-    def _setup_gc_timer(self):
-        self._gc_timer = QTimer()
-        self._gc_timer.setInterval(30000)  # 30 секунд
-        self._gc_timer.timeout.connect(self._on_gc_timer)
-        self._gc_timer.start()
-
     ############################
     #                          #
     #    settings callbacks    #
@@ -334,7 +332,7 @@ class Alpine(QMainWindow):
 
     def _on_time_range_changed(self, value):
         self.time_range = value
-        self.plot_widget.set_period(value.total_seconds())
+        self.plot_widget.set_time_range(value.total_seconds())
 
     def _on_history_range_changed(self, value):
         self.history_range = value
@@ -381,10 +379,6 @@ class Alpine(QMainWindow):
             f"перерисовки графика: {self._redraw_plot_hz:.1f} Hz"
         )
 
-    def _on_gc_timer(self):
-        collected = gc.collect()
-        print(f"🧹 Сборщик мусора вызван (каждые 30 с), удалено объектов: {collected}")
-
     def _on_plot_update_timer(self):
         if self.stop_flag or not self._dirty_cnls:
             return
@@ -401,7 +395,7 @@ class Alpine(QMainWindow):
     #                                             #
     ###############################################
     def _on_cnl_updated(self, cnl):
-        if self._is_shutting_down or cnl not in self.cnl_to_curve:
+        if self._is_shutting_down or cnl not in self.cnls:
             return
         self._incoming_update_count += 1
         self._dirty_cnls.add(cnl)
@@ -410,8 +404,41 @@ class Alpine(QMainWindow):
         if self.stop_flag:
             return
         if curve := self.cnl_to_curve.get(cnl):
-            pos = self._channel_history_to_points(cnl)
-            curve.setData(pos, refresh=refresh)
+            if cnl.data:
+                try:
+                    latest_ts = float(cnl.data[-1]["timestamp"])
+                except (KeyError, TypeError, ValueError):
+                    latest_ts = None
+                if latest_ts is not None:
+                    keep_seconds = (
+                        self.time_range.total_seconds()
+                        + self.history_range.total_seconds()
+                    )
+                    cutoff_ts = latest_ts - keep_seconds
+                    first_keep_idx = 0
+                    for idx, record in enumerate(cnl.data):
+                        try:
+                            if float(record["timestamp"]) >= cutoff_ts:
+                                first_keep_idx = idx
+                                break
+                        except (KeyError, TypeError, ValueError):
+                            continue
+                    if first_keep_idx > 0:
+                        del cnl.data[:first_keep_idx]
+
+            points = []
+            for record in cnl.data:
+                try:
+                    timestamp = float(record["timestamp"])
+                    value = float(record["value"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                points.append((timestamp, value))
+            if points:
+                pos = np.asarray(points, dtype=np.float64)
+            else:
+                pos = np.empty((0, 2), dtype=np.float64)
+            curve.set_data(pos, refresh=refresh)
             if refresh:
                 self._redraw_plot_count += 1
 
@@ -420,44 +447,6 @@ class Alpine(QMainWindow):
             self._redraw_plot(cnl, refresh=False)
         self.plot_widget.refresh()
         self._redraw_plot_count += 1
-
-    def _channel_history_to_points(self, cnl):
-        self._prune_channel_data(cnl)
-        points = []
-        for record in cnl.data:
-            try:
-                timestamp = float(record["timestamp"])
-                value = float(record["value"])
-            except (KeyError, TypeError, ValueError):
-                continue
-            points.append((timestamp, value))
-        if not points:
-            return np.empty((0, 2), dtype=np.float64)
-        return np.asarray(points, dtype=np.float64)
-
-    def _prune_channel_data(self, cnl):
-        if not cnl.data:
-            return
-        try:
-            latest_ts = float(cnl.data[-1]["timestamp"])
-        except (KeyError, TypeError, ValueError):
-            return
-
-        keep_seconds = (
-            self.time_range.total_seconds()
-            + self.history_range.total_seconds()
-        )
-        cutoff_ts = latest_ts - keep_seconds
-        first_keep_idx = 0
-        for idx, record in enumerate(cnl.data):
-            try:
-                if float(record["timestamp"]) >= cutoff_ts:
-                    first_keep_idx = idx
-                    break
-            except (KeyError, TypeError, ValueError):
-                continue
-        if first_keep_idx > 0:
-            del cnl.data[:first_keep_idx]
 
     def _redraw_timer_interval_msec(self, max_redraw_hz=None):
         if max_redraw_hz is None:

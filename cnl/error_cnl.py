@@ -1,8 +1,15 @@
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QColor, QIcon, QPalette
-from PySide6.QtWidgets import QLabel, QMessageBox, QPushButton, QHBoxLayout, QStyle
+from PySide6.QtWidgets import (
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QHBoxLayout,
+    QSizePolicy,
+    QStyle,
+)
 
-from cnl.cnl import _Channel
+from cnl._base import ElidedLabel, _Channel
 
 
 class ErrorChannel(_Channel):
@@ -20,6 +27,11 @@ class ErrorChannel(_Channel):
         return None
 
     def _setup_ui(self):
+        self.setMinimumWidth(0)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Fixed,
+        )
         palette = self.palette()
         palette.setColor(QPalette.ColorRole.Window, QColor("#8f1d1d"))
         palette.setColor(QPalette.ColorRole.WindowText, QColor("#ffffff"))
@@ -28,6 +40,7 @@ class ErrorChannel(_Channel):
 
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(6, 4, 6, 4)
+        main_layout.setSpacing(6)
 
         marker = QLabel("!")
         self.marker = marker
@@ -35,7 +48,7 @@ class ErrorChannel(_Channel):
         marker.setAlignment(Qt.AlignmentFlag.AlignCenter)
         marker.setPalette(palette)
 
-        self.name_label = QLabel(f"Ошибка: {self.settings.name}")
+        self.name_label = ElidedLabel(f"Ошибка: {self.settings.name}")
         self.name_label.setPalette(palette)
         self.name_label.setWordWrap(False)
 
@@ -63,8 +76,7 @@ class ErrorChannel(_Channel):
         close_btn.setToolTip("Закрыть канал")
 
         main_layout.addWidget(marker)
-        main_layout.addWidget(self.name_label)
-        main_layout.addStretch()
+        main_layout.addWidget(self.name_label, 1)
         main_layout.addWidget(info_btn)
         main_layout.addWidget(close_btn)
         self.info_btn.clicked.connect(lambda flag: self._show_error())

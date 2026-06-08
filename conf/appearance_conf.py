@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 )
 
 from conf._conf import _Configurator
-from aux.gui.handy_enums import LineColor
+from aux.gui.enums import LineColor
 
 
 class AppearenceConfigurator(_Configurator):

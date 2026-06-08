@@ -7,8 +7,9 @@ from pydantic import Field, BaseModel
 from PySide6.QtCore import QThread, QObject, Signal, QTimer, Qt
 from tango import DeviceProxy
 
-from cnl.cnl import _ChannelSettings, _Channel
-from aux.settings_decorators import with_settings_property, settings_with_signals
+from cnl._base import _Channel
+from cnl._settings import _ChannelSettings
+from aux.settings.decorators import with_settings_property, settings_with_signals
 
 
 def is_scalar(value):

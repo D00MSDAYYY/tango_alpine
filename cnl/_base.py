@@ -1,44 +1,51 @@
-from typing import Literal
 from datetime import datetime
 
-from pydantic import Field, BaseModel
-from PySide6.QtGui import QIcon, QPalette, QColor
-from PySide6.QtCore import Signal, QSize
+from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtGui import QColor, QIcon, QPainter, QPalette
 from PySide6.QtWidgets import (
-    QWidget,
-    QLabel,
     QDialog,
     QHBoxLayout,
+    QLabel,
     QPushButton,
+    QSizePolicy,
+    QWidget,
 )
 from vispy.color import Color
 
-from aux.gui.handy_enums import *
-from aux.polymorphic_field_handlers import PolymorphicBase
-from aux.settings_decorators import with_settings_property, settings_with_signals
-
-from conf.conf_dialog import ConfiguratorDialog
+from aux.settings.decorators import with_settings_property
 from conf.appearance_conf import AppearenceConfigurator
+from conf.dialog import ConfiguratorDialog
 
 
-class _Appearence(BaseModel):
-    line_width: float = Field(default=1.0)
-    line_color: LineColor = Field(default_factory=random_line_color)  # type: ignore
-    show_dots: bool = Field(default=False)
+class ElidedLabel(QLabel):
+    def __init__(self, text="", parent=None):
+        super().__init__(text, parent)
+        self._full_text = text
+        self.setMinimumWidth(0)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
+        )
+        self.setToolTip(text)
 
+    def setText(self, text):
+        self._full_text = text
+        self.setToolTip(text)
+        super().setText(text)
 
-Appearence = settings_with_signals(_Appearence)
-
-
-class _ChannelSettings(PolymorphicBase):
-    type: Literal["ChannelSettings"] = "ChannelSettings"
-    name: str = Field(default="безымянный_канал")
-    units: str | None = Field(default=None)
-
-    appearence: _Appearence = Field(default_factory=_Appearence)
-
-
-ChannelSettings = settings_with_signals(_ChannelSettings)
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setPen(self.palette().color(QPalette.ColorRole.WindowText))
+        text = self.fontMetrics().elidedText(
+            self._full_text,
+            Qt.TextElideMode.ElideRight,
+            self.width(),
+        )
+        painter.drawText(
+            self.rect(),
+            self.alignment() | Qt.AlignmentFlag.AlignVCenter,
+            text,
+        )
 
 
 @with_settings_property()
@@ -101,6 +108,11 @@ class _Channel(QWidget):
             pass
 
     def _setup_ui(self):
+        self.setMinimumWidth(0)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Fixed,
+        )
         palette = self.palette()
         palette.setColor(QPalette.ColorRole.Window, QColor("#3a3a3a"))
         palette.setColor(QPalette.ColorRole.WindowText, QColor("#f0f0f0"))
@@ -109,13 +121,14 @@ class _Channel(QWidget):
 
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(6, 4, 6, 4)
+        main_layout.setSpacing(6)
 
         color_wgt = QWidget()
         self.color_wgt = color_wgt
         color_wgt.setFixedSize(20, 20)
         self._update_color_indicator()
 
-        self.name_label = QLabel("")
+        self.name_label = ElidedLabel("")
         self.name_label.setPalette(palette)
 
         self.name_label.setText(self.settings.name)
@@ -145,8 +158,7 @@ class _Channel(QWidget):
         self.close_btn.clicked.connect(lambda flag: self._btn_close_clicked())
 
         main_layout.addWidget(color_wgt)
-        main_layout.addWidget(self.name_label)
-        main_layout.addStretch()
+        main_layout.addWidget(self.name_label, 1)
         main_layout.addWidget(palette_btn)
         main_layout.addWidget(close_btn)
 
@@ -158,7 +170,7 @@ class _Channel(QWidget):
         conf = AppearenceConfigurator(sett=self.settings.appearence)
         conf_dialog = ConfiguratorDialog(configurators={"Общее": conf})
         if conf_dialog.exec() == QDialog.DialogCode.Accepted:
-            pass  #  done
+            pass
 
     def _btn_close_clicked(self):
         self.close_requested.emit(self)

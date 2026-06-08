@@ -1,5 +1,11 @@
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QScrollArea
+from PySide6.QtWidgets import (
+    QFrame,
+    QSizePolicy,
+    QWidget,
+    QVBoxLayout,
+    QScrollArea,
+)
 
 
 class LegendWidget(QWidget):
@@ -8,23 +14,36 @@ class LegendWidget(QWidget):
         self._setup_ui()
 
     def _setup_ui(self):
+        self.setMinimumWidth(0)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Expanding,
+        )
+
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setContentsMargins(6, 6, 6, 6)
         main_layout.setSpacing(0)
 
         scroll_area = QScrollArea(self)
         self.scroll_area = scroll_area
         scroll_area.setWidgetResizable(True)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_area.setMinimumWidth(0)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
         container = QWidget()
         self.container = container
+        container.setMinimumWidth(0)
+        container.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Preferred,
+        )
 
         _layout = QVBoxLayout(container)
-        self._layout = _layout  
-        _layout.setContentsMargins(3, 3, 3, 3)
-        _layout.setSpacing(3)
+        self._layout = _layout
+        _layout.setContentsMargins(0, 0, 0, 0)
+        _layout.setSpacing(5)
         _layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         scroll_area.setWidget(container)
@@ -42,7 +61,6 @@ class LegendWidget(QWidget):
             if item := self._layout.takeAt(0):
                 if wgt := item.widget():
                     wgt.deleteLater()
-
 
     def get_channels(self):
         widgets = []
