@@ -5,6 +5,13 @@
   "max_plot_points": 5000,
   "x_axis_label": "x",
   "y_axis_label": "y",
+  "anomaly_z_score_enabled": false,
+  "anomaly_z_score_threshold": 6.0,
+  "anomaly_z_score_window_size": 300,
+  "anomaly_z_score_min_points": 100,
+  "anomaly_delta_jump_enabled": false,
+  "anomaly_delta_jump_threshold": 20.0,
+  "anomaly_delta_jump_min_points": 3,
   "cnls_setts": [
     {
       "type": "TPEChannelSettings",

@@ -4,10 +4,14 @@ from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QColor, QIcon, QPainter, QPalette
 from PySide6.QtWidgets import (
     QDialog,
+    QDialogButtonBox,
     QHBoxLayout,
     QLabel,
+    QListWidget,
     QPushButton,
     QSizePolicy,
+    QStyle,
+    QVBoxLayout,
     QWidget,
 )
 from vispy.color import Color
@@ -61,6 +65,7 @@ class _Channel(QWidget):
         self.settings = settings
         self.new_data = None
         self.data = []
+        self.anomaly_results = ()
         self._last_poll_timestamp = None
 
         self.settings.appearence.line_color_changed.connect(
@@ -139,6 +144,16 @@ class _Channel(QWidget):
         fixed_w = sq_side
         fixed_h = sq_side
 
+        left_btn = QPushButton()
+        self.left_btn = left_btn
+        left_btn.setFlat(True)
+        left_btn.setFixedSize(fixed_w, fixed_h)
+        left_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogHelpButton))
+        left_btn.setIconSize(icon_size)
+        left_btn.setEnabled(False)
+        left_btn.setToolTip("Аномалий нет")
+        left_btn.clicked.connect(self._show_anomalies)
+
         palette_btn = QPushButton()
         self.palette_btn = palette_btn
         palette_btn.setFlat(True)
@@ -158,6 +173,7 @@ class _Channel(QWidget):
         self.close_btn.clicked.connect(lambda flag: self._btn_close_clicked())
 
         main_layout.addWidget(color_wgt)
+        main_layout.addWidget(left_btn)
         main_layout.addWidget(self.name_label, 1)
         main_layout.addWidget(palette_btn)
         main_layout.addWidget(close_btn)
@@ -174,3 +190,56 @@ class _Channel(QWidget):
 
     def _btn_close_clicked(self):
         self.close_requested.emit(self)
+
+    def set_anomaly_results(self, strategy_results):
+        self.anomaly_results = tuple(strategy_results)
+        anomaly_count = sum(len(result.anomalies) for result in self.anomaly_results)
+        self.left_btn.setEnabled(anomaly_count > 0)
+        if anomaly_count > 0:
+            self.left_btn.setIcon(
+                self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxWarning)
+            )
+            self.left_btn.setToolTip(f"Найдено аномалий: {anomaly_count}")
+        else:
+            self.left_btn.setIcon(
+                self.style().standardIcon(QStyle.StandardPixmap.SP_DialogHelpButton)
+            )
+            self.left_btn.setToolTip("Аномалий нет")
+
+    def _show_anomalies(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Аномалии канала {self.settings.name}")
+        dialog.resize(560, 420)
+
+        layout = QVBoxLayout(dialog)
+        title = QLabel(f"Найдено аномалий: {self._anomaly_count()}")
+        layout.addWidget(title)
+
+        anomaly_list = QListWidget()
+        anomaly_list.addItems(self._anomaly_lines())
+        layout.addWidget(anomaly_list)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+
+        dialog.exec()
+
+    def _anomaly_count(self):
+        return sum(
+            len(result.anomalies)
+            for result in self.anomaly_results
+        )
+
+    def _anomaly_lines(self):
+        lines = []
+        for result in self.anomaly_results:
+            if not result.anomalies:
+                continue
+            for anomaly in result.anomalies:
+                time_text = datetime.fromtimestamp(anomaly.timestamp).strftime(
+                    "%Y-%m-%d %H:%M:%S.%f"
+                )[:-3]
+                lines.append(f"{time_text} | {result.strategy_name} | {anomaly.name}")
+
+        return lines if lines else ["Аномалий нет"]

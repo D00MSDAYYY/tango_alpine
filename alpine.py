@@ -10,8 +10,16 @@ from PySide6.QtWidgets import QToolBar, QMainWindow, QDialog, QSplitter, QPushBu
 
 from conf.dialog import ConfiguratorDialog
 from conf.alpine_conf import AlpineConfigurator
+from conf.anomaly_detector_conf import AnomalyDetectorConfigurator
 from cnl._settings import _ChannelSettings
 from cnl.error_cnl import ErrorChannel
+from aux.anomaly import (
+    AnomalyDetector,
+    DeltaJumpStrategy,
+    NoOpAnomalyDetectionRunner,
+    ThreadedAnomalyDetectionRunner,
+    ZScoreStrategy,
+)
 from aux.gui.widgets.opener_dialog import OpenerDialog
 from aux.gui.widgets.searchable_list import SearchableListView
 from aux.settings._polymorphic import polymorphic_list_field_handlers
@@ -29,6 +37,13 @@ class _AlpineSettings(BaseModel):
     max_plot_points: int = Field(default=5000)
     x_axis_label: str = Field(default="X")
     y_axis_label: str = Field(default="Y")
+    anomaly_z_score_enabled: bool = Field(default=False)
+    anomaly_z_score_threshold: float = Field(default=6.0)
+    anomaly_z_score_window_size: int = Field(default=300)
+    anomaly_z_score_min_points: int = Field(default=100)
+    anomaly_delta_jump_enabled: bool = Field(default=False)
+    anomaly_delta_jump_threshold: float = Field(default=20.0)
+    anomaly_delta_jump_min_points: int = Field(default=3)
 
     cnls_setts: List[_ChannelSettings] = Field(default_factory=list)
     _val_cnls_setts, _ser_cnls_setts = polymorphic_list_field_handlers(
@@ -71,6 +86,9 @@ class Alpine(QMainWindow):
         self.cnl_to_curve = {}
         self._dirty_cnls = set()
         self._is_shutting_down = False
+        self._anomaly_detection_versions = {}
+        self.anomaly_detector = None
+        self._update_anomaly_detector()
 
         self._setup_ui()
         self._setup_plot_update_timer()
@@ -120,6 +138,7 @@ class Alpine(QMainWindow):
     def remove_cnl(self, cnl):
         self.cnls.discard(cnl)
         self._dirty_cnls.discard(cnl)
+        self._anomaly_detection_versions.pop(cnl, None)
         if curve := self.cnl_to_curve.pop(cnl, None):
             self.plot_widget.remove_curve(curve)
         try:
@@ -176,8 +195,12 @@ class Alpine(QMainWindow):
                 self.add_cnl(cnl)
 
     def _action_palette_triggered(self):
-        conf = AlpineConfigurator(sett=self.settings)
-        conf_dialog = ConfiguratorDialog(configurators={"Общее": conf})
+        conf_dialog = ConfiguratorDialog(
+            configurators={
+                "Общее": AlpineConfigurator(sett=self.settings),
+                "Детектор": AnomalyDetectorConfigurator(sett=self.settings),
+            }
+        )
         if conf_dialog.exec() == QDialog.DialogCode.Accepted:
             pass
 
@@ -232,6 +255,34 @@ class Alpine(QMainWindow):
             )  # type: ignore
             self.settings.y_axis_label_changed.connect(
                 self._on_y_axis_label_changed,
+                self.Qt_DirConn,
+            )  # type: ignore
+            self.settings.anomaly_z_score_enabled_changed.connect(
+                self._on_anomaly_strategy_changed,
+                self.Qt_DirConn,
+            )  # type: ignore
+            self.settings.anomaly_delta_jump_enabled_changed.connect(
+                self._on_anomaly_strategy_changed,
+                self.Qt_DirConn,
+            )  # type: ignore
+            self.settings.anomaly_z_score_threshold_changed.connect(
+                self._on_anomaly_strategy_params_changed,
+                self.Qt_DirConn,
+            )  # type: ignore
+            self.settings.anomaly_z_score_window_size_changed.connect(
+                self._on_anomaly_strategy_params_changed,
+                self.Qt_DirConn,
+            )  # type: ignore
+            self.settings.anomaly_z_score_min_points_changed.connect(
+                self._on_anomaly_strategy_params_changed,
+                self.Qt_DirConn,
+            )  # type: ignore
+            self.settings.anomaly_delta_jump_threshold_changed.connect(
+                self._on_anomaly_strategy_params_changed,
+                self.Qt_DirConn,
+            )  # type: ignore
+            self.settings.anomaly_delta_jump_min_points_changed.connect(
+                self._on_anomaly_strategy_params_changed,
                 self.Qt_DirConn,
             )  # type: ignore
 
@@ -350,6 +401,55 @@ class Alpine(QMainWindow):
     def _on_y_axis_label_changed(self, value):
         self.plot_widget.set_y_axis_label(value)
 
+    def _on_anomaly_strategy_changed(self, value):
+        self._update_anomaly_detector()
+
+    def _on_anomaly_strategy_params_changed(self, value):
+        self._update_anomaly_detector()
+
+    def _update_anomaly_detector(self):
+        for cnl in self.cnls:
+            self._anomaly_detection_versions[cnl] = (
+                self._anomaly_detection_versions.get(cnl, 0) + 1
+            )
+
+        strategies = {}
+        if self.settings.anomaly_z_score_enabled:
+            strategies["z_score"] = ZScoreStrategy(
+                threshold=self.settings.anomaly_z_score_threshold,
+                window_size=self.settings.anomaly_z_score_window_size,
+                min_points=self.settings.anomaly_z_score_min_points,
+            )
+        if self.settings.anomaly_delta_jump_enabled:
+            strategies["delta_jump"] = DeltaJumpStrategy(
+                threshold=self.settings.anomaly_delta_jump_threshold,
+                min_points=self.settings.anomaly_delta_jump_min_points,
+            )
+
+        if strategies:
+            anomaly_detector = ThreadedAnomalyDetectionRunner(
+                AnomalyDetector(strategies),
+                parent=self,
+            )
+        else:
+            anomaly_detector = NoOpAnomalyDetectionRunner(parent=self)
+
+        anomaly_detector.completed.connect(
+            self._on_anomaly_detection_finished,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        self.anomaly_detector = anomaly_detector
+        if not strategies:
+            for cnl in self.cnls:
+                cnl.set_anomaly_results(())
+
+    def _on_anomaly_detection_finished(self, cnl, version, strategy_results):
+        if self._is_shutting_down or cnl not in self.cnls:
+            return
+        if self._anomaly_detection_versions.get(cnl) != version:
+            return
+        cnl.set_anomaly_results(strategy_results)
+
     def _save_all_settings(self):
         self.config_store.save(
             self.settings_path,
@@ -438,6 +538,9 @@ class Alpine(QMainWindow):
                 pos = np.asarray(points, dtype=np.float64)
             else:
                 pos = np.empty((0, 2), dtype=np.float64)
+            version = self._anomaly_detection_versions.get(cnl, 0) + 1
+            self._anomaly_detection_versions[cnl] = version
+            self.anomaly_detector.detect(cnl, pos, version)
             curve.set_data(pos, refresh=refresh)
             if refresh:
                 self._redraw_plot_count += 1

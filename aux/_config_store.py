@@ -138,6 +138,13 @@ class XlsxConfigStore:
             "max_plot_points",
             "x_axis_label",
             "y_axis_label",
+            "anomaly_z_score_enabled",
+            "anomaly_z_score_threshold",
+            "anomaly_z_score_window_size",
+            "anomaly_z_score_min_points",
+            "anomaly_delta_jump_enabled",
+            "anomaly_delta_jump_threshold",
+            "anomaly_delta_jump_min_points",
         ):
             rows.append([key, data.get(key)])
         return rows
