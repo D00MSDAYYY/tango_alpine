@@ -13,9 +13,9 @@ from cnl._base import ElidedLabel, _Channel
 
 
 class ErrorChannel(_Channel):
-    def __init__(self, settings, error_text: str):
+    def __init__(self, settings, error_text: str, appearance_dialog_factory=None):
         self.error_text = error_text
-        super().__init__(settings)
+        super().__init__(settings, appearance_dialog_factory)
 
     def start(self):
         pass

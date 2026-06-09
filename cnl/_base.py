@@ -3,11 +3,13 @@ from datetime import datetime
 from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QColor, QIcon, QPainter, QPalette
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
+    QListWidgetItem,
     QPushButton,
     QSizePolicy,
     QStyle,
@@ -17,8 +19,7 @@ from PySide6.QtWidgets import (
 from vispy.color import Color
 
 from aux.settings.decorators import with_settings_property
-from conf.appearance_conf import AppearenceConfigurator
-from conf.dialog import ConfiguratorDialog
+from conf._appearance_dialog_factory import _AppearanceDialogFactory
 
 
 class ElidedLabel(QLabel):
@@ -59,13 +60,20 @@ class _Channel(QWidget):
     error_occurred = Signal(str)
     stopped = Signal()
 
-    def __init__(self, settings):
+    def __init__(
+        self,
+        settings,
+        appearance_dialog_factory: _AppearanceDialogFactory | None = None,
+    ):
         super().__init__()
 
         self.settings = settings
+        self.appearance_dialog_factory = appearance_dialog_factory
         self.new_data = None
         self.data = []
         self.anomaly_results = ()
+        self.hidden_anomaly_keys = set()
+        self.favorite_anomaly_keys = set()
         self._last_poll_timestamp = None
 
         self.settings.appearence.line_color_changed.connect(
@@ -183,8 +191,11 @@ class _Channel(QWidget):
         self.color_wgt.setStyleSheet(f"background-color: {Color(color_name).hex};")
 
     def _btn_palette_clicked(self):
-        conf = AppearenceConfigurator(sett=self.settings.appearence)
-        conf_dialog = ConfiguratorDialog(configurators={"Общее": conf})
+        if self.appearance_dialog_factory is None:
+            return
+        conf_dialog = self.appearance_dialog_factory.create_appearance_dialog(
+            self.settings.appearence,
+        )
         if conf_dialog.exec() == QDialog.DialogCode.Accepted:
             pass
 
@@ -193,7 +204,7 @@ class _Channel(QWidget):
 
     def set_anomaly_results(self, strategy_results):
         self.anomaly_results = tuple(strategy_results)
-        anomaly_count = sum(len(result.anomalies) for result in self.anomaly_results)
+        anomaly_count = self._anomaly_count()
         self.left_btn.setEnabled(anomaly_count > 0)
         if anomaly_count > 0:
             self.left_btn.setIcon(
@@ -216,8 +227,47 @@ class _Channel(QWidget):
         layout.addWidget(title)
 
         anomaly_list = QListWidget()
-        anomaly_list.addItems(self._anomaly_lines())
+        anomaly_list.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
+        self._fill_anomaly_list(anomaly_list)
         layout.addWidget(anomaly_list)
+
+        actions_layout = QHBoxLayout()
+        favorite_btn = QPushButton("*")
+        favorite_btn.setToolTip("Добавить выбранные записи в избранное")
+        clear_btn = QPushButton("Очистить выбранные")
+        actions_layout.addWidget(favorite_btn)
+        actions_layout.addWidget(clear_btn)
+        actions_layout.addStretch(1)
+        layout.addLayout(actions_layout)
+
+        def refresh_list():
+            self._fill_anomaly_list(anomaly_list)
+            title.setText(f"Найдено аномалий: {self._anomaly_count()}")
+            self.set_anomaly_results(self.anomaly_results)
+
+        def selected_keys():
+            return [
+                item.data(Qt.ItemDataRole.UserRole)
+                for item in anomaly_list.selectedItems()
+                if item.data(Qt.ItemDataRole.UserRole) is not None
+            ]
+
+        def clear_selected():
+            self.hidden_anomaly_keys.update(selected_keys())
+            refresh_list()
+
+        def toggle_selected_favorites():
+            for key in selected_keys():
+                if key in self.favorite_anomaly_keys:
+                    self.favorite_anomaly_keys.remove(key)
+                else:
+                    self.favorite_anomaly_keys.add(key)
+            refresh_list()
+
+        clear_btn.clicked.connect(clear_selected)
+        favorite_btn.clicked.connect(toggle_selected_favorites)
 
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         button_box.rejected.connect(dialog.reject)
@@ -227,19 +277,42 @@ class _Channel(QWidget):
 
     def _anomaly_count(self):
         return sum(
-            len(result.anomalies)
+            1
             for result in self.anomaly_results
+            for anomaly in result.anomalies
+            if self._anomaly_key(result, anomaly) not in self.hidden_anomaly_keys
         )
 
-    def _anomaly_lines(self):
-        lines = []
+    def _fill_anomaly_list(self, anomaly_list):
+        anomaly_list.clear()
+        has_visible_anomalies = False
         for result in self.anomaly_results:
             if not result.anomalies:
                 continue
             for anomaly in result.anomalies:
+                key = self._anomaly_key(result, anomaly)
+                if key in self.hidden_anomaly_keys:
+                    continue
+                has_visible_anomalies = True
                 time_text = datetime.fromtimestamp(anomaly.timestamp).strftime(
                     "%Y-%m-%d %H:%M:%S.%f"
                 )[:-3]
-                lines.append(f"{time_text} | {result.strategy_name} | {anomaly.name}")
+                favorite_mark = "* " if key in self.favorite_anomaly_keys else ""
+                item = QListWidgetItem(
+                    f"{favorite_mark}{time_text} | "
+                    f"{result.strategy_name} | {anomaly.name}"
+                )
+                item.setData(Qt.ItemDataRole.UserRole, key)
+                anomaly_list.addItem(item)
 
-        return lines if lines else ["Аномалий нет"]
+        if not has_visible_anomalies:
+            item = QListWidgetItem("Аномалий нет")
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            anomaly_list.addItem(item)
+
+    def _anomaly_key(self, result, anomaly):
+        return (
+            result.strategy_name,
+            anomaly.name,
+            float(anomaly.timestamp),
+        )

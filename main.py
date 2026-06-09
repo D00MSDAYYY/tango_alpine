@@ -2,8 +2,12 @@ from PySide6.QtWidgets import QApplication, QDialog
 
 from aux.gui import resources_rc  # noqa: F401
 from alpine import Alpine
-from cnl.factory import ChannelMaker
+from conf.appearance_dialog_factory import AppearanceDialogFactory
+from conf.dialog_factory import SettingsDialogFactory
+from cnl.factory import ChannelFactory
 from aux._config_store import ConfigStoreFactory
+from aux.anomaly import AnomalyDetectorFactory
+from aux.gui.widgets.channel_picker import ChannelPicker
 from aux.plot.vispy_plot_widget import VispyPlot
 from aux.plot.plot_curve_factory import PlotCurveFactory
 from aux.gui.widgets.legend import LegendWidget
@@ -23,10 +27,14 @@ def main():
 
     if settings_picker.exec() == QDialog.DialogCode.Accepted:
         plot_widget = VispyPlot()
+        appearance_dialog_factory = AppearanceDialogFactory()
         alpine = Alpine(
             sett_path=settings_picker.get_file_path(),
             config_store_factory=ConfigStoreFactory(),
-            cnl_maker=ChannelMaker(),
+            channel_factory=ChannelFactory(appearance_dialog_factory),
+            anomaly_detector_factory=AnomalyDetectorFactory(),
+            settings_dialog_factory=SettingsDialogFactory(),
+            channel_picker=ChannelPicker(),
             plot_widget=plot_widget,
             plot_curve_factory=PlotCurveFactory(plot_widget),
             legend=LegendWidget(),

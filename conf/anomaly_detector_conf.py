@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
     QFrame,
+    QLabel,
     QSpinBox,
     QVBoxLayout,
 )
@@ -25,6 +26,13 @@ class AnomalyDetectorConfigurator(_Configurator):
 
     def _setup_ui(self):  # type: ignore
         layout = QVBoxLayout(self)
+        warning_label = QLabel(
+            "Предупреждение: включение стратегий обнаружения аномалий "
+            "может заметно замедлить обновление графика на больших объемах данных."
+        )
+        warning_label.setWordWrap(True)
+        layout.addWidget(warning_label)
+
         form = QFormLayout()
         self.form = form
 

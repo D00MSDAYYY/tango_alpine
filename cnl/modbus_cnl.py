@@ -261,8 +261,8 @@ class _PollingThread(QThread):
 #######################
 @with_settings_property()
 class ModbusChannel(_Channel):
-    def __init__(self, settings):
-        super().__init__(settings)
+    def __init__(self, settings, appearance_dialog_factory=None):
+        super().__init__(settings, appearance_dialog_factory)
         self._polling_thread: _PollingThread | None = None
         self._is_running = False
 

@@ -56,30 +56,43 @@ class ZScoreStrategy:
         if len(points) < self.min_points:
             return StrategyDetectionResult(strategy_name="z_score")
 
-        anomalies = []
         values = points[:, 1]
+        indexes = np.arange(self.min_points, len(points))
+        window_starts = np.maximum(0, indexes - self.window_size)
 
-        for index in range(self.min_points, len(points)):
-            window_start = max(0, index - self.window_size)
-            window = values[window_start:index]
-            mean = float(np.mean(window))
-            std = float(np.std(window))
-            value = float(values[index])
-            if std == 0.0:
-                if value == mean:
-                    continue
-                score = float("inf")
-            else:
-                score = abs((value - mean) / std)
-            if score >= self.threshold:
-                anomalies.append(
-                    Anomaly(
-                        name="z_score",
-                        timestamp=float(points[index, 0]),
-                    )
-                )
+        sums = np.concatenate(([0.0], np.cumsum(values)))
+        squared_sums = np.concatenate(([0.0], np.cumsum(values * values)))
+        counts = indexes - window_starts
+
+        window_sums = sums[indexes] - sums[window_starts]
+        window_squared_sums = squared_sums[indexes] - squared_sums[window_starts]
+        means = window_sums / counts
+        variances = np.maximum(window_squared_sums / counts - means * means, 0.0)
+        stds = np.sqrt(variances)
+
+        current_values = values[indexes]
+        scores = np.zeros(len(indexes), dtype=np.float64)
+        non_zero_std = stds > 0.0
+        scores[non_zero_std] = np.abs(
+            (current_values[non_zero_std] - means[non_zero_std])
+            / stds[non_zero_std]
+        )
+        scores[~non_zero_std] = np.where(
+            current_values[~non_zero_std] == means[~non_zero_std],
+            0.0,
+            np.inf,
+        )
+
+        anomaly_indexes = indexes[scores >= self.threshold]
+        anomalies = tuple(
+            Anomaly(
+                name="z_score",
+                timestamp=float(points[index, 0]),
+            )
+            for index in anomaly_indexes
+        )
 
         return StrategyDetectionResult(
             strategy_name="z_score",
-            anomalies=tuple(anomalies),
+            anomalies=anomalies,
         )

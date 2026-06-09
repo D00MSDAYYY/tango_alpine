@@ -9,12 +9,14 @@ from PySide6.QtWidgets import (
 
 
 class LegendWidget(QWidget):
+    MIN_EXPANDED_WIDTH = 260
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._setup_ui()
 
     def _setup_ui(self):
-        self.setMinimumWidth(0)
+        self.setMinimumWidth(self.MIN_EXPANDED_WIDTH)
         self.setSizePolicy(
             QSizePolicy.Policy.Preferred,
             QSizePolicy.Policy.Expanding,
@@ -28,15 +30,15 @@ class LegendWidget(QWidget):
         self.scroll_area = scroll_area
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        scroll_area.setMinimumWidth(0)
+        scroll_area.setMinimumWidth(self.MIN_EXPANDED_WIDTH)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
         container = QWidget()
         self.container = container
-        container.setMinimumWidth(0)
+        container.setMinimumWidth(self.MIN_EXPANDED_WIDTH)
         container.setSizePolicy(
-            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Preferred,
             QSizePolicy.Policy.Preferred,
         )
 

@@ -1,11 +1,12 @@
 from aux.plot.curve import Pen
+from aux.plot._plot import _PlotCurve, _PlotWidget
 
 
 class PlotCurveFactory:
-    def __init__(self, plot_widget):
+    def __init__(self, plot_widget: _PlotWidget):
         self.plot_widget = plot_widget
 
-    def create_curve(self, cnl):
+    def create_curve(self, cnl) -> _PlotCurve:
         pen = Pen(
             color=cnl.settings.appearence.line_color.value,
             width=cnl.settings.appearence.line_width,
@@ -13,7 +14,7 @@ class PlotCurveFactory:
         )
         return self.plot_widget.add_curve(pen)
 
-    def update_curve_style(self, cnl, curve):
+    def update_curve_style(self, cnl, curve: _PlotCurve) -> None:
         appearence = cnl.settings.appearence
         curve.set_style(
             color=appearence.line_color.value,

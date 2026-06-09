@@ -14,6 +14,11 @@ class ConfigStore(Protocol):
         ...
 
 
+class _ConfigStoreFactory(Protocol):
+    def create(self, path: str | Path) -> ConfigStore:
+        ...
+
+
 class JsonConfigStore:
     def load(self, path: str | Path) -> dict[str, Any]:
         with open(path, encoding="utf-8") as file:

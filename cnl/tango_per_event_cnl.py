@@ -227,8 +227,8 @@ class _TPEThread(QThread):
 @with_settings_property()
 class TPEChannel(_Channel):
     # @profile
-    def __init__(self, settings):
-        super().__init__(settings)
+    def __init__(self, settings, appearance_dialog_factory=None):
+        super().__init__(settings, appearance_dialog_factory)
         
         self._is_running = False
 
